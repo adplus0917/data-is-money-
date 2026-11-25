@@ -31,58 +31,8 @@
 </header>
 <nav class="topnav" id="topnav" aria-label="DATA Patrimonio"></nav>
 
-<section class="hero" data-view="inicio">
-  <canvas id="heroFx" class="hero-fx" aria-hidden="true"></canvas>
-  <div class="hero-in">
-    <div class="hero-copy"><h1 id="heroT"></h1><p id="heroP"></p>
-      <div class="cta"><a class="btn go" href="#start" id="ctaBtn"></a><span class="trust" id="trust"></span></div>
-    </div>
-    <div class="hero-fig" aria-hidden="true">
-      <svg viewBox="0 0 400 300" role="presentation" focusable="false">
-        <defs>
-          <radialGradient id="figGlow" cx="50%" cy="45%" r="55%">
-            <stop offset="0%" stop-color="#c9a227" stop-opacity=".28"/>
-            <stop offset="100%" stop-color="#c9a227" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <circle cx="212" cy="148" r="128" fill="url(#figGlow)" class="fig-glow"/>
-        <!-- floating data chips -->
-        <g class="fig-float f1">
-          <rect x="292" y="52" width="72" height="30" rx="9" fill="#132849" stroke="#c9a227" stroke-width="1.6"/>
-          <text x="328" y="72" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#e6c452">+18%</text>
-        </g>
-        <g class="fig-float f2">
-          <rect x="26" y="66" width="76" height="30" rx="9" fill="#132849" stroke="#2a4168" stroke-width="1.6"/>
-          <text x="64" y="86" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#a3b3cc">1,240</text>
-        </g>
-        <g class="fig-float f3">
-          <rect x="306" y="196" width="64" height="30" rx="9" fill="#132849" stroke="#2a4168" stroke-width="1.6"/>
-          <text x="338" y="216" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#a3b3cc">2019</text>
-        </g>
-        <!-- desk -->
-        <line x1="22" y1="240" x2="378" y2="240" stroke="#2a4168" stroke-width="3" stroke-linecap="round"/>
-        <!-- person -->
-        <g class="fig-bob">
-          <circle cx="126" cy="94" r="17" fill="#132849" stroke="#e6c452" stroke-width="2.6"/>
-          <path d="M100,240 L104,152 Q126,134 148,152 L152,240" fill="#132849" stroke="#c9a227" stroke-width="2.6" stroke-linejoin="round"/>
-        </g>
-        <path d="M106,164 L148,226" stroke="#c9a227" stroke-width="2.6" stroke-linecap="round" fill="none"/>
-        <g class="fig-type">
-          <path d="M148,160 L178,196 L204,214" stroke="#e6c452" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        </g>
-        <!-- laptop -->
-        <rect x="196" y="138" width="112" height="76" rx="8" fill="#0e1f3a" stroke="#c9a227" stroke-width="2.6"/>
-        <rect x="196" y="138" width="112" height="76" rx="8" fill="#c9a227" opacity=".08" class="fig-glow"/>
-        <line x1="208" y1="152" x2="262" y2="152" stroke="#2a4168" stroke-width="4" stroke-linecap="round"/>
-        <polyline points="210,182 228,168 244,176 262,158 282,164 296,150" fill="none" stroke="#e6c452" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="fig-line"/>
-        <rect class="fig-bar b1" x="212" y="188" width="12" height="18" rx="2" fill="#c9a227"/>
-        <rect class="fig-bar b2" x="232" y="182" width="12" height="24" rx="2" fill="#c9a227" opacity=".75"/>
-        <rect class="fig-bar b3" x="252" y="176" width="12" height="30" rx="2" fill="#e6c452"/>
-        <path d="M188,214 L316,214 L328,228 L176,228 Z" fill="#132849" stroke="#c9a227" stroke-width="2.6" stroke-linejoin="round"/>
-      </svg>
-    </div>
-  </div>
-</section>
+<section class="hero" data-view="inicio"><h1 id="heroT"></h1><p id="heroP"></p>
+  <div class="cta"><a class="btn go" href="#start" id="ctaBtn"></a><span class="trust" id="trust"></span></div></section>
 <main class="wrap" id="start" aria-live="polite" data-view="valua">
   <div class="bar" id="bar"></div>
   <div class="stepnames" id="stepnames"></div>
@@ -101,6 +51,5 @@
 <script src="/engine.js"></script>
 <script src="/i18n.js"></script>
 <script src="/app.js"></script>
-<script src="/hero-fx.js"></script>
 </body>
 </html>
