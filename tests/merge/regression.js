@@ -118,6 +118,26 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   ok(!/garantiz/.test(oos2.text) || oos2.topic === "licencia" || !oos2.inScope, "chat unit: no guaranteed-sale promise is ever made");
 }
 
+/* ---------- 6. Single deal path: exclusive direct purchase ONLY ----------
+   (Nov 25 2026: Miguel first directed a two-button buy-vs-license choice,
+   then reversed it minutes later — the funnel presents ONE path, a buy
+   outright with exclusivity. We are always the buyer; no license option
+   may be offered to the seller anywhere in the funnel.) ---------- */
+{
+  const app = fs.readFileSync(path.join(ROOT, "public/app.js"), "utf8");
+  const i18n = fs.readFileSync(path.join(ROOT, "public/i18n.js"), "utf8");
+  const css = fs.readFileSync(path.join(ROOT, "public/styles.css"), "utf8");
+  ok(!/data-k="track"/.test(app) && /class="dealcard"/.test(app), "funnel step 3 shows ONE deal statement card — no track option buttons");
+  ok(!/licNote/.test(app), "estimate step shows only the direct-purchase note (no license-note branch)");
+  ok(/track: "compra_directa"/.test(app) && /S\.a\.track = "compra_directa"/.test(app), "funnel state pins the track to compra_directa (saved sessions normalized)");
+  ok(/Compra directa con exclusividad/.test(i18n) && /Direct purchase with exclusivity/.test(i18n), "the single path is labeled 'Compra directa con exclusividad' / 'Direct purchase with exclusivity'");
+  ok(/adquirimos los derechos en exclusiva/.test(i18n) && /acquire the rights exclusively/.test(i18n), "deal copy states WE acquire the rights exclusively (ES + EN)");
+  const ag = i18n.slice(i18n.indexOf("const AG="));
+  ok(!ag.includes('"licencia"'), "the agreement text (AG) contains no license track — purchase only");
+  ok(/\.dealcard\{/.test(css), "dealcard statement styles present in styles.css");
+  ok(opt.TRACKS.length === 1 && opt.TRACKS[0] === "compra_directa", "server accepts exactly ONE track value: compra_directa");
+}
+
 /* ---------- engine integrity + worked example ---------- */
 {
   const { valueDataset } = require(path.join(ROOT, "server/engine.js"));
@@ -128,7 +148,7 @@ const auth = require(path.join(ROOT, "server/auth.js"));
 /* ---------- HTTP checks against the running merged server ---------- */
 const W = "http://localhost:3200";
 const j = async (url, opt2 = {}) => { const r = await fetch(url, opt2); const t = await r.text(); let b; try { b = JSON.parse(t); } catch { b = t; } return { s: r.status, b }; };
-const answers = { sector: "roof", years_in_business: "over10", employees: "26to50", record_years: "5to10", data_types: ["invoices", "email", "accounting"], record_volume: "10kto50k", revenue_band: "5to10m", format: "digital_structured", frequency: "ongoing", track: "licencia" };
+const answers = { sector: "roof", years_in_business: "over10", employees: "26to50", record_years: "5to10", data_types: ["invoices", "email", "accounting"], record_volume: "10kto50k", revenue_band: "5to10m", format: "digital_structured", frequency: "ongoing", track: "compra_directa" };
 const MAN = [true, true, true, true, true];
 
 (async () => {
@@ -153,6 +173,10 @@ const MAN = [true, true, true, true, true];
     const dbJson = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8"));
     const row = dbJson.submissions.find(x => x.folio === r.b.folio);
     ok(row && row.signature_method === "drawn" && row.signature_data === png, "drawn signature is saved on the submission");
+    ok(row && row.track === "compra_directa", "submission records the single deal path: compra_directa (exclusive direct purchase)");
+
+    r = await post({ answers: { ...answers, track: "licencia" }, contact: { company_name: "X SA", owner_name: "Ana Paz", email: "ana@empresa.com", signature_name: "Ana Paz" }, manifest: MAN });
+    ok(r.s === 400, "HTTP: a license track is rejected — the funnel has ONE deal path (got " + r.s + ")");
 
     r = await post({ answers, contact: { company_name: "X SA", owner_name: "Ana Paz", email: "ana@empresa.com", signature_name: "Ana Paz", signature_method: "typed", signature_style: "allura" }, manifest: MAN });
     ok(r.s === 201, "HTTP: styled-signature submission accepted (got " + r.s + ")");
@@ -177,8 +201,10 @@ const MAN = [true, true, true, true, true];
 
     r = await j(W + "/api/contact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Ana", email: "ana@empresa.jet", message: "Hola" }) });
     ok(r.s === 400 && r.b.error_code === "email_tld", "HTTP: chat email form rejects a .jet address with the shared validator (got " + r.s + ")");
-    r = await j(W + "/api/contact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Ana", email: "ana@empresa.com", message: "Quiero más información" }) });
+    r = await j(W + "/api/contact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Ana", email: "ana@empresa.com", message: "Quiero más información", track: "compra_directa" }) });
     ok(r.s === 201, "HTTP: chat email form accepts a valid address (got " + r.s + ")");
+    r = await j(W + "/api/contact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Ana", email: "ana@empresa.com", message: "Hola", track: "licencia" }) });
+    ok(r.s === 400, "HTTP: a gate lead carrying a license track is rejected (got " + r.s + ")");
 
     const login = await fetch(W + "/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "test-password-123" }) });
     const cookie = (login.headers.get("set-cookie") || "").split(";")[0];
@@ -189,7 +215,9 @@ const MAN = [true, true, true, true, true];
     r = await A("/api/admin/chats");
     ok(Array.isArray(r.b) && r.b.length >= 1 && r.b[0].messages.length >= 2 && r.b[0].messages.some(m => m.role === "bot" && m.topic === "compra_directa"), "HTTP: chat transcript is logged and readable in the admin panel");
     r = await A("/api/admin/contact-messages");
-    ok(Array.isArray(r.b) && r.b.some(m => m.email === "ana@empresa.com"), "HTTP: email-form message appears in the admin panel");
+    ok(Array.isArray(r.b) && r.b.some(m => m.email === "ana@empresa.com" && m.track === "compra_directa"), "HTTP: email-form message appears in the admin panel WITH its deal track");
+    const csv = await (await fetch(W + "/api/admin/export.csv?table=contact", { headers: { Cookie: cookie } })).text();
+    ok(/id,created_at,name,email,track,message/.test(csv) && csv.includes("compra_directa"), "HTTP: contact CSV export carries the track column and the single deal value");
   } finally {
     child.kill("SIGTERM");
     fs.rmSync(dataDir, { recursive: true, force: true });

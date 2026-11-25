@@ -190,11 +190,15 @@ app.post("/api/contact", limiter(20, 10 * 60e3), async (req, res) => {
   const email = opt.str(b.email, 200);
   const message = opt.str(b.message, 2000);
   const name = opt.str(b.name, 160);
+  // Deal track, sent by the price gate with the lead (single value since
+  // Nov 25 2026: compra_directa). Optional for the plain contact form.
+  const track = b.track == null || b.track === "" ? null : (opt.TRACKS.includes(b.track) ? b.track : undefined);
+  if (track === undefined) return res.status(400).json({ error: "unknown track" });
   if (!message) return res.status(400).json({ error: "message required" });
   const err = opt.emailError(email);
   if (err === "tld") return res.status(400).json({ error_code: "email_tld", error: "That email ending is not a real domain — for example, .jet is not valid. Did you mean .com? Check the ending (.com, .net, .org…)" });
   if (err) return res.status(400).json({ error_code: "email_format", error: "That email is not in a valid format. It should look like name@company.com, with no spaces." });
-  try { await db.addContactMessage({ name, email, message, lang: b.lang === "es" ? "es" : "en" }); res.status(201).json({ ok: true }); }
+  try { await db.addContactMessage({ name, email, message, lang: b.lang === "es" ? "es" : "en", track }); res.status(201).json({ ok: true }); }
   catch (e) { console.error(e); res.status(500).json({ error: "could not save" }); }
 });
 
@@ -241,7 +245,7 @@ app.get("/api/admin/export.:fmt", auth.requireAdmin, async (req, res) => {
   }
   if (req.params.fmt === "csv") {
     const which = ["feedback", "contact"].includes(req.query.table) ? req.query.table : "submissions";
-    const cols = which === "feedback" ? ["id","created_at","step","folio","comment"] : which === "contact" ? ["id","created_at","name","email","message"] : SUBCOLS;
+    const cols = which === "feedback" ? ["id","created_at","step","folio","comment"] : which === "contact" ? ["id","created_at","name","email","track","message"] : SUBCOLS;
     const rows = which === "feedback" ? fb : which === "contact" ? contact : subs;
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="data-patrimonio-${which}-${day}.csv"`);

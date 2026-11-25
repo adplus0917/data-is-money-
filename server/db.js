@@ -98,8 +98,8 @@ function postgres(url) {
     },
     async addContactMessage(m) {
       const { rows: [r] } = await pool.query(
-        `INSERT INTO contact_messages (name, email, message, lang) VALUES ($1,$2,$3,$4) RETURNING id, created_at`,
-        [m.name || null, m.email, m.message, m.lang || null]);
+        `INSERT INTO contact_messages (name, email, message, lang, track) VALUES ($1,$2,$3,$4,$5) RETURNING id, created_at`,
+        [m.name || null, m.email, m.message, m.lang || null, m.track || null]);
       return r;
     },
     async listContactMessages() {
@@ -324,7 +324,7 @@ function jsonFile(dir) {
         messages: d.chatMessages.filter(m => m.session_id === s.id).map(m => ({ role: m.role, topic: m.topic, text: m.text, at: m.created_at })) }));
     },
     addContactMessage: m => locked(() => {
-      const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), name: m.name || null, email: m.email, message: m.message, lang: m.lang || null };
+      const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), name: m.name || null, email: m.email, message: m.message, lang: m.lang || null, track: m.track || null };
       d.contactMessages.push(r); save(d); return r;
     }),
     async listContactMessages() { return load().contactMessages.slice().reverse(); },

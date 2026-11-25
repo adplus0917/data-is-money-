@@ -101,9 +101,11 @@ CREATE TABLE IF NOT EXISTS contact_messages (
   name       text,
   email      text NOT NULL,
   message    text NOT NULL,
-  lang       text
+  lang       text,
+  track      text                    -- deal track captured with a price-gate lead (single value: compra_directa)
 );
 CREATE INDEX IF NOT EXISTS contact_messages_created_idx ON contact_messages (created_at DESC);
+ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS track text;
 
 -- Audit trail: every status change the team makes
 CREATE TABLE IF NOT EXISTS status_history (

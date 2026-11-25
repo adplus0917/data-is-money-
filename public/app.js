@@ -15,7 +15,7 @@ const SS = { get(k, d) { try { return JSON.parse(sessionStorage.getItem(k)) ?? d
 const LS = { get(k, d) { try { return localStorage.getItem(k) ?? d } catch (e) { return d } }, set(k, v) { try { localStorage.setItem(k, v) } catch (e) {} } };
 
 /* ---------- state: one seller session (kept in this tab only) ---------- */
-const blank = () => ({ sector: "", years_in_business: "", employees: "", record_years: "", data_types: [], record_volume: "", revenue_band: "", format: "", frequency: "", track: "", company_name: "", owner_name: "", email: "", phone: "", man: [], signature_name: "", signature_method: "typed", signature_style: "great", signature_data: "", signature_done: false });
+const blank = () => ({ sector: "", years_in_business: "", employees: "", record_years: "", data_types: [], record_volume: "", revenue_band: "", format: "", frequency: "", track: "compra_directa", company_name: "", owner_name: "", email: "", phone: "", man: [], signature_name: "", signature_method: "typed", signature_style: "great", signature_data: "", signature_done: false });
 
 /* ---------- email validation (merge fix, ported from the live site) ----------
    Format AND a real top-level domain: ".jet" is not a real TLD and is
@@ -43,6 +43,10 @@ const SIG_STYLES = [["great", "sig-style-great"], ["dancing", "sig-style-dancing
 const sigClass = id => (SIG_STYLES.find(x => x[0] === id) || SIG_STYLES[0])[1];
 let S = Object.assign({ step: 0, a: blank(), folio: null, token: null, samples: [] }, SS.get("dp.session", {}));
 S.lang = LS.get("dp.lang", (navigator.language || "").startsWith("es") ? "es" : "en");
+/* single deal path (Nov 25 2026, Miguel's reversal of the two-option
+   funnel): exclusive direct purchase ONLY — there is no license option.
+   Any older saved session is normalized to the single track. */
+S.a.track = "compra_directa";
 /* soft launch additions: top-nav view, general-feedback modal, live chat */
 S.view = S.view || "inicio";
 S.fbOpen = false;
@@ -89,7 +93,7 @@ const API = {
   feedback(step, comment) { return this.post("/api/feedback", { step, comment, folio: S.folio, lang: S.lang }); },
   feedbackGeneral(comment) { return this.post("/api/feedback", { step: "general", comment, folio: S.folio, lang: S.lang }); },
   chat(message) { return this.post("/api/chat", { message, sessionId: S.chat.sessionId, lang: S.lang }); },
-  contact(name, email, message) { return this.post("/api/contact", { name, email, message, lang: S.lang }); },
+  contact(name, email, message, track) { return this.post("/api/contact", { name, email, message, lang: S.lang, ...(track ? { track } : {}) }); },
 };
 
 /* ---------- screens ---------- */
@@ -101,7 +105,7 @@ function stepHTML() {
   const l = L(), i = S.step, a = S.a, h = `<div class="kick">${l.stepOf(i + 1)}</div><h2>${l.steps[i]}</h2><p class="sub">${l.subs[i]}</p>`;
   if (i === 0) return h + `<span class="q">${l.qSector}</span><div class="grp">${l.gT}</div>${opts("sector", "sector", "t")}<div class="grp">${l.gO}</div>${opts("sector", "sector", "o")}<span class="q">${l.qBiz}</span>${opts("years", "years_in_business")}<span class="q">${l.qEmp}</span>${opts("emp", "employees")}` + navBtns(i, l.next) + fbBox(1);
   if (i === 1) return h + `<span class="q">${l.qRec}</span>${opts("years", "record_years")}<span class="q">${l.qTypes}</span><div class="opts">${O.types.map(([c]) => `<button type="button" class="opt" data-type="${c}" aria-pressed="${a.data_types.includes(c)}">${esc(lab("types", c))}</button>`).join("")}</div><span class="q">${l.qVol}</span>${opts("vol", "record_volume")}` + navBtns(i, l.next) + fbBox(2);
-  if (i === 2) return h + `<span class="q">${l.qRev}</span>${opts("rev", "revenue_band")}<span class="q">${l.qFmt}</span>${opts("fmt", "format")}<span class="q">${l.qFreq}</span><div class="opts wide">${O.freq.map(([c]) => `<button type="button" class="opt" data-k="frequency" data-v="${c}" aria-pressed="${a.frequency === c}">${esc(lab("freq", c))}</button>`).join("")}</div><span class="q">${l.qTrack}</span><div class="opts wide">${O.track.map(([c]) => `<button type="button" class="opt" data-k="track" data-v="${c}" aria-pressed="${a.track === c}">${esc(lab("track", c))}<small>${l.trackD[c]}</small></button>`).join("")}</div>` + navBtns(i, l.see) + fbBox(3);
+  if (i === 2) return h + `<span class="q">${l.qRev}</span>${opts("rev", "revenue_band")}<span class="q">${l.qFmt}</span>${opts("fmt", "format")}<span class="q">${l.qFreq}</span><div class="opts wide">${O.freq.map(([c]) => `<button type="button" class="opt" data-k="frequency" data-v="${c}" aria-pressed="${a.frequency === c}">${esc(lab("freq", c))}</button>`).join("")}</div><span class="q">${l.qTrack}</span><div class="dealcard"><span class="dealname">${esc(lab("track", "compra_directa"))}</span><small>${l.trackD.compra_directa}</small></div>` + navBtns(i, l.see) + fbBox(3);
   if (i === 3 && !S.gate.done) return gateHTML();
   if (i === 3) {
     const v = valueDataset(engineInput(a)), b = v.breakdown;
@@ -109,7 +113,7 @@ function stepHTML() {
     return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num">${usd(v.low)} – ${usd(v.high)}</div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
      <div class="score"><span>${l.scoreL}</span><div class="m"><i style="width:${v.score}%"></i></div><b>${v.score}/100</b></div></div>
      <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div></div>
-     <p class="disc">${l.disc}</p><p class="trackn">${a.track === "licencia" ? l.licNote : l.buyNote}</p>` + navBtns(i, l.toContract) + fbBox(4);
+     <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.toContract) + fbBox(4);
   }
   if (i === 4) {
     const today = new Date().toLocaleDateString(S.lang === "es" ? "es-US" : "en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -164,7 +168,7 @@ async function gateSubmit() {
     `${l.qRev}: ${lab("rev", a.revenue_band)}`,
     `${l.qTrack}: ${lab("track", a.track)}`].filter(Boolean).join("\n");
   try {
-    await API.contact(g.name.trim(), g.email.trim(), lines);
+    await API.contact(g.name.trim(), g.email.trim(), lines, a.track);
     g.done = true; g.busy = false;
     if (!a.owner_name) a.owner_name = g.name.trim();
     if (!a.email) a.email = g.email.trim();
@@ -200,7 +204,7 @@ function valid() {
   const a = S.a, l = L();
   if (S.step === 0 && !(a.sector && a.years_in_business && a.employees)) return l.e1;
   if (S.step === 1 && !(a.record_years && a.data_types.length && a.record_volume)) return l.e2;
-  if (S.step === 2 && !(a.revenue_band && a.format && a.frequency && a.track)) return l.e3;
+  if (S.step === 2 && !(a.revenue_band && a.format && a.frequency)) return l.e3;
   if (S.step === 4) {
     if (!(a.company_name.trim() && a.owner_name.trim() && (a.email.trim() || a.phone.trim()) && a.man.length === l.man.length)) return l.e5;
     if (a.email.trim()) { const em = emailMsg(l); if (em) return em; }
