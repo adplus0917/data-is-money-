@@ -163,3 +163,17 @@ Object.assign(T.es,{
  chatT:"Chatea con nosotros",chatOpen:"Chatea con nosotros",chatHello:"¡Hola! Puedo explicarte cómo funciona DATA Patrimonio: las dos formas de vender, la valoración, la puerta de calidad y la bóveda. ¿Qué te gustaría saber?",chatPh:"Escribe tu pregunta…",chatSend:"Enviar",chatWa:"Seguir por WhatsApp",chatEmail:"Enviar por email",chatEmailT:"Envía tu pregunta por email y te respondemos.",chatSent:"Enviado. Nuestro equipo te responderá a tu correo.",
  tabChats:"Chats",tabContact:"Mensajes",chatCols:["Sesión","Fecha","Idioma","Conversación"],contactCols:["Fecha","Nombre","Correo","Mensaje"],chatEmpty:"Sin chats todavía.",contactEmpty:"Sin mensajes por email todavía.",generalWord:"General"
 });
+
+/* price gate (Nov 25 2026, Miguel's direction): nobody sees the valuation
+   until they leave name + email; the lead is saved through /api/contact
+   into the same contact_messages the team panel already shows. */
+Object.assign(T.en,{
+ gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name and email — we'll send you the next steps there too.",
+ gateName:"Your name",gateWa:"WhatsApp (optional)",gateBtn:"See my valuation →",gateNote:"No spam and no commitment. Your information stays private and secure.",
+ gateErrName:"Please tell us your name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)"
+});
+Object.assign(T.es,{
+ gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre y tu correo — ahí te enviamos también los siguientes pasos.",
+ gateName:"Tu nombre",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
+ gateErrName:"Por favor, dinos tu nombre.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)"
+});

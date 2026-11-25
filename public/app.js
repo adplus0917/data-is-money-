@@ -48,6 +48,10 @@ S.view = S.view || "inicio";
 S.fbOpen = false;
 S.contact = S.contact || { name: "", email: "", message: "", sent: false, err: "" };
 S.chat = S.chat || { open: false, sessionId: null, msgs: [], emailOpen: false, email: "", emailMsg: "", emailSent: false, emailErr: "", busy: false };
+/* price gate (Nov 25 2026): the step-4 estimate stays hidden until the
+   visitor leaves name + email; the lead is saved via /api/contact into
+   the existing contact_messages capture (team panel → Messages). */
+S.gate = S.gate || { name: "", email: "", phone: "", done: false, err: "", busy: false };
 const save = () => SS.set("dp.session", S);
 const L = () => T[S.lang];
 const lab = (list, code) => { const r = O[list].find(x => x[0] === code); return r ? (S.lang === "es" ? r[2] : r[1]) : (code || "—"); };
@@ -98,6 +102,7 @@ function stepHTML() {
   if (i === 0) return h + `<span class="q">${l.qSector}</span><div class="grp">${l.gT}</div>${opts("sector", "sector", "t")}<div class="grp">${l.gO}</div>${opts("sector", "sector", "o")}<span class="q">${l.qBiz}</span>${opts("years", "years_in_business")}<span class="q">${l.qEmp}</span>${opts("emp", "employees")}` + navBtns(i, l.next) + fbBox(1);
   if (i === 1) return h + `<span class="q">${l.qRec}</span>${opts("years", "record_years")}<span class="q">${l.qTypes}</span><div class="opts">${O.types.map(([c]) => `<button type="button" class="opt" data-type="${c}" aria-pressed="${a.data_types.includes(c)}">${esc(lab("types", c))}</button>`).join("")}</div><span class="q">${l.qVol}</span>${opts("vol", "record_volume")}` + navBtns(i, l.next) + fbBox(2);
   if (i === 2) return h + `<span class="q">${l.qRev}</span>${opts("rev", "revenue_band")}<span class="q">${l.qFmt}</span>${opts("fmt", "format")}<span class="q">${l.qFreq}</span><div class="opts wide">${O.freq.map(([c]) => `<button type="button" class="opt" data-k="frequency" data-v="${c}" aria-pressed="${a.frequency === c}">${esc(lab("freq", c))}</button>`).join("")}</div><span class="q">${l.qTrack}</span><div class="opts wide">${O.track.map(([c]) => `<button type="button" class="opt" data-k="track" data-v="${c}" aria-pressed="${a.track === c}">${esc(lab("track", c))}<small>${l.trackD[c]}</small></button>`).join("")}</div>` + navBtns(i, l.see) + fbBox(3);
+  if (i === 3 && !S.gate.done) return gateHTML();
   if (i === 3) {
     const v = valueDataset(engineInput(a)), b = v.breakdown;
     const sub = { base: lab("rev", a.revenue_band), fYears: lab("years", a.record_years), fEmployees: lab("emp", a.employees), fTypes: l.typesN(a.data_types.length), fFormat: lab("fmt", a.format), fFrequency: lab("freq", a.frequency) };
@@ -121,6 +126,55 @@ function stepHTML() {
    <h3 style="font-size:18px;margin-top:20px">${l.upT}</h3><label class="drop" id="drop"><input type="file" id="fileIn" multiple><b>${l.drop}</b><br><span class="sub">${l.dropS}</span></label>
    <ul class="files">${S.samples.map(s => `<li><span>${esc(s.name)}</span><span>${(s.size / 1048576).toFixed(1)} MB · ${esc(st(s))}</span></li>`).join("")}</ul>
    <div class="nav"><button type="button" class="btn" id="again">${l.again}</button></div>` + fbBox(6);
+}
+
+/* Price gate: shown in place of the step-4 estimate until the visitor's
+   name + email are saved. The lead goes through the EXISTING /api/contact
+   capture (contact_messages, team panel → Messages) with the funnel
+   answers attached — no parallel store, no new table. */
+function gateHTML() {
+  const l = L(), g = S.gate;
+  const emErr = g.email.trim() ? emailErrorClient(g.email) : null;
+  const em = emErr === "tld" ? l.errEmailTld : emErr === "format" ? l.errEmailFmt : "";
+  return `<div class="kick">${l.stepOf(4)}</div><h2>${l.gateT}</h2><p class="sub">${l.gateS}</p>
+   <div class="fields">
+    <div class="f"><label for="g_name">${l.gateName}</label><input id="g_name" data-g="name" type="text" autocomplete="name" maxlength="160" value="${esc(g.name)}"></div>
+    <div class="f"><label for="g_email">${l.fEmail}</label><input id="g_email" data-g="email" type="email" autocomplete="email" maxlength="200" value="${esc(g.email)}"><div class="emsg" role="alert">${esc(em)}</div></div>
+    <div class="f"><label for="g_phone">${l.gateWa}</label><input id="g_phone" data-g="phone" type="tel" autocomplete="tel" maxlength="40" value="${esc(g.phone)}"></div>
+   </div>
+   <p class="disc">${l.gateNote}</p>
+   <p class="err" id="err">${esc(g.err)}</p><div class="nav"><button type="button" class="btn" id="back">${l.back}</button><button type="button" class="btn go" id="gateGo" ${g.busy ? "disabled" : ""}>${l.gateBtn}</button></div>` + fbBox(4);
+}
+
+async function gateSubmit() {
+  const l = L(), g = S.gate, a = S.a;
+  if (g.busy) return;
+  if (!g.name.trim()) { g.err = l.gateErrName; save(); render(); return; }
+  const emErr = emailErrorClient(g.email);
+  if (emErr) { g.err = emErr === "tld" ? l.errEmailTld : l.errEmailFmt; save(); render(); return; }
+  g.busy = true; g.err = ""; save(); render();
+  const lines = [l.gateLead,
+    `${l.gateName}: ${g.name.trim()}`,
+    `${l.fEmail}: ${g.email.trim()}`,
+    g.phone.trim() ? `${l.gateWa}: ${g.phone.trim()}` : null,
+    `${l.qSector}: ${lab("sector", a.sector)}`,
+    `${l.qRec}: ${lab("years", a.record_years)}`,
+    `${l.qEmp}: ${lab("emp", a.employees)}`,
+    `${l.qTypes}: ${a.data_types.map(t => lab("types", t)).join(", ")}`,
+    `${l.qRev}: ${lab("rev", a.revenue_band)}`,
+    `${l.qTrack}: ${lab("track", a.track)}`].filter(Boolean).join("\n");
+  try {
+    await API.contact(g.name.trim(), g.email.trim(), lines);
+    g.done = true; g.busy = false;
+    if (!a.owner_name) a.owner_name = g.name.trim();
+    if (!a.email) a.email = g.email.trim();
+    if (!a.phone && g.phone.trim()) a.phone = g.phone.trim();
+    save(); render(); $("start").scrollIntoView({ block: "start" });
+  } catch (e) {
+    g.busy = false;
+    g.err = e.status === 400 && e.message && e.message !== "error" ? e.message : l.netErr;
+    save(); render();
+  }
 }
 
 function sigModalHTML() {
@@ -239,6 +293,48 @@ function render() {
   save();
 }
 
+/* ---------- auto-advance (Nov 25 2026, Miguel's direction) ----------
+   Picking answers moves the funnel forward on its own: the next
+   unanswered question scrolls into view, and once a step's answers are
+   complete the funnel advances by itself — no hunting for Continue.
+   Manual navigation stays for the typed/review steps (gate, contract).
+   Auto-advance can never skip the price gate: advancing from the last
+   question step lands on the valuation step, which renders the gate
+   form instead of the estimate until the lead is saved. */
+let advTimer = null;
+function stopAdv() { if (advTimer) { clearTimeout(advTimer); advTimer = null; } }
+function scrollNextQuestion() {
+  const panel = $("panel"); if (!panel) return;
+  const groups = [], seenKeys = new Set();
+  panel.querySelectorAll(".opts").forEach(gEl => {
+    const opt = gEl.querySelector("[data-k],[data-type]");
+    if (!opt) return;
+    const key = opt.dataset.k || "data_types";
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key); groups.push({ key, el: gEl });
+  });
+  for (const { key, el } of groups) {
+    const answered = key === "data_types"
+      ? !!panel.querySelector('[data-type][aria-pressed="true"]')
+      : !!panel.querySelector('[data-k="' + key + '"][aria-pressed="true"]');
+    if (!answered) {
+      const prev = el.previousElementSibling;
+      (prev && (prev.classList.contains("q") || prev.classList.contains("grp")) ? prev : el).scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+  }
+}
+function afterPick() {
+  stopAdv();
+  if (![0, 1, 2].includes(S.step)) return;
+  if (valid()) { scrollNextQuestion(); return; }
+  advTimer = setTimeout(() => {
+    advTimer = null;
+    if (![0, 1, 2].includes(S.step) || valid()) return;
+    S.step++; save(); render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" });
+  }, 550);
+}
+
 /* ---------- actions ---------- */
 async function submit(btn) {
   btn.disabled = true;
@@ -327,19 +423,22 @@ document.addEventListener("click", e => {
     S.a.signature_done = true; S.sigOpen = false; save(); render(); return;
   }
   if (b.dataset.lang) { S.lang = b.dataset.lang; LS.set("dp.lang", S.lang); render(); return; }
-  if (b.dataset.k) { S.a[b.dataset.k] = b.dataset.v; render(); return; }
-  if (b.dataset.type) { const k = b.dataset.type; S.a.data_types = S.a.data_types.includes(k) ? S.a.data_types.filter(x => x !== k) : [...S.a.data_types, k]; render(); return; }
-  if (b.id === "back") { S.step--; render(); return; }
+  if (b.dataset.k) { S.a[b.dataset.k] = b.dataset.v; render(); afterPick(); return; }
+  if (b.dataset.type) { const k = b.dataset.type; S.a.data_types = S.a.data_types.includes(k) ? S.a.data_types.filter(x => x !== k) : [...S.a.data_types, k]; render(); afterPick(); return; }
+  if (b.id === "gateGo") { stopAdv(); gateSubmit(); return; }
+  if (b.id === "back") { stopAdv(); S.step--; render(); return; }
   if (b.id === "next") {
+    stopAdv();
     const m = valid(); if (m) { $("err").textContent = m; return; }
     if (S.step === 4) { submit(b); return; }
     S.step++; render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" }); return;
   }
-  if (b.id === "again") { const keep = { lang: S.lang, view: S.view, chat: S.chat, contact: S.contact }; S = { step: 0, a: blank(), folio: null, token: null, samples: [], fbOpen: false, ...keep }; render(); $("start").scrollIntoView({ block: "start" }); }
+  if (b.id === "again") { stopAdv(); const keep = { lang: S.lang, view: S.view, chat: S.chat, contact: S.contact, gate: S.gate }; S = { step: 0, a: blank(), folio: null, token: null, samples: [], fbOpen: false, ...keep }; render(); $("start").scrollIntoView({ block: "start" }); }
 });
 document.addEventListener("input", e => {
   const el = e.target;
   if (el.dataset.f) { S.a[el.dataset.f] = el.value; save(); }
+  if (el.dataset.g) { S.gate[el.dataset.g] = el.value; save(); }
   if (el.dataset.cf) { S.contact[el.dataset.cf] = el.value; save(); }
   if (el.id === "chatEmailIn") { S.chat.email = el.value; save(); }
   if (el.id === "chatEmailMsg") { S.chat.emailMsg = el.value; save(); }
