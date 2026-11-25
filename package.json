@@ -1,0 +1,29 @@
+{
+  "name": "data-patrimonio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DATA Patrimonio seller website: valuation funnel, agreement, folio, sample upload, team panel.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "validate": "node scripts/validate-engine.js",
+    "ingest": "node vault/ingest-worker.js",
+    "builder": "node vault/viewing-builder.js",
+    "dataroom": "node vault/dataroom/server.js",
+    "setup:buckets": "node ops/setup-buckets.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1177.0",
+    "@aws-sdk/lib-storage": "^3.1177.0",
+    "@aws-sdk/s3-request-presigner": "^3.1177.0",
+    "exceljs": "^4.4.0",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5"
+  }
+}

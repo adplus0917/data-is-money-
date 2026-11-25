@@ -1,0 +1,5 @@
+{ "Version": "2012-10-17", "Statement": [
+  { "Sid": "ReadViewingOnly", "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::dp-viewing/*"] },
+  { "Sid": "NothingElse", "Effect": "Deny", "Action": ["s3:*"], "Resource": ["arn:aws:s3:::dp-master", "arn:aws:s3:::dp-master/*", "arn:aws:s3:::dp-quarantine", "arn:aws:s3:::dp-quarantine/*"] },
+  { "Sid": "NoWrites", "Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": ["arn:aws:s3:::dp-viewing/*"] }
+] }

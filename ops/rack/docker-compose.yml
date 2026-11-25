@@ -1,0 +1,74 @@
+# The vault rack. Run from the repo root:  docker compose -f ops/rack/docker-compose.yml up -d
+# TWO storage servers on two encrypted ZFS datasets with DIFFERENT keys:
+#   minio-master  (dataset vault/master)  → buckets dp-master, dp-quarantine
+#   minio-viewing (dataset vault/viewing) → bucket  dp-viewing
+# Networks: "core" (minio-master, ClamAV, ingest, builder), "viewnet" (minio-viewing, builder, data room),
+# "dmz" (data room + tunnel). The data room has NO network route to minio-master at all.
+# NOTHING here publishes a port to the internet; buyers reach the data room through the Cloudflare Tunnel.
+services:
+  minio-master:
+    image: minio/minio:latest           # pin a release tag in production; enable TLS with internal certs (see VAULT.md)
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MASTER_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MASTER_ROOT_PASSWORD}
+    volumes:
+      - /vault/master:/data             # ZFS dataset vault/master (encrypted, its own key, held off this machine)
+    networks: [core]
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]   # API + console, this machine only (for setup)
+    restart: unless-stopped
+
+  minio-viewing:
+    image: minio/minio:latest
+    command: server /data --console-address ":9003"
+    environment:
+      MINIO_ROOT_USER: ${VIEWING_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${VIEWING_ROOT_PASSWORD}
+    volumes:
+      - /vault/viewing:/data            # ZFS dataset vault/viewing (encrypted, a DIFFERENT key)
+    networks: [viewnet]
+    ports: ["127.0.0.1:9002:9000", "127.0.0.1:9003:9003"]
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:stable
+    networks: [core]
+    restart: unless-stopped
+
+  ingest:
+    build: { context: ../.., dockerfile: Dockerfile }
+    command: ["node", "vault/ingest-worker.js"]
+    env_file: ../env/ingest.env
+    depends_on: [minio-master, clamav]
+    networks: [core, egress]            # egress: to reach the cloud staging bucket + database
+    restart: unless-stopped
+
+  builder:
+    build: { context: ../.., dockerfile: Dockerfile }
+    command: ["node", "vault/viewing-builder.js"]
+    env_file: ../env/builder.env
+    depends_on: [minio-master, minio-viewing]
+    networks: [core, viewnet, egress]
+    restart: unless-stopped
+
+  dataroom:
+    build: { context: ../.., dockerfile: Dockerfile }
+    command: ["node", "vault/dataroom/server.js"]
+    env_file: ../env/dataroom.env
+    tmpfs: ["/tmp:size=512m,mode=1777"]  # PDF pages are rendered in RAM only
+    read_only: true
+    depends_on: [minio-viewing]
+    networks: [viewnet, dmz]
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks: [dmz]
+    restart: unless-stopped
+
+networks:
+  core: { internal: true }              # master storage: no internet
+  viewnet: { internal: true }           # viewing storage: no internet
+  egress: {}                            # outbound only (staging bucket, database, alerts)
+  dmz: {}                               # data room ↔ Cloudflare tunnel

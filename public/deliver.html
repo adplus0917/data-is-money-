@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DATA Patrimonio · Entrega segura</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><a class="brand" href="/"><img src="/favicon.svg" width="44" height="44" alt=""><span><b>DATA PATRIMONIO</b><small>Entrega segura · Secure delivery</small></span></a></header>
+<main class="wrap">
+  <div class="card">
+    <div class="kick" id="fol"></div>
+    <h2>Sube tus datos · Upload your data</h2>
+    <p class="sub">Los archivos van directo a almacenamiento cifrado y luego a nuestra bóveda. Nadie los descarga a una computadora.<br>Files go straight to encrypted storage and then to our vault. No one downloads them to a computer.</p>
+    <label class="drop" id="drop"><input type="file" id="fileIn" multiple><b>Arrastra archivos aquí o toca para escoger · Drag files here or tap to choose</b><br><span class="sub">Excel, CSV, PDF, ZIP, fotos · hasta 5 GB por archivo / up to 5 GB per file</span></label>
+    <ul class="files" id="list"></ul>
+    <p class="err" id="err"></p>
+  </div>
+</main>
+<script src="/deliver.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DATA Patrimonio</title>
+<meta name="description" content="Find out what your company's historical data is worth. Valora los datos de tu empresa en 2 minutos.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Inter:wght@400;500;600&family=Great+Vibes&family=Dancing+Script:wght@600&family=Allura&family=Caveat:wght@600&family=Sacramento&family=Kalam&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+      <polygon fill="#c9a227" points="22,1 25.5,8.2 33.1,4.8 32.1,12.9 40.2,13.3 35.5,19.9 42.3,24.4 34.6,27 37.2,34.7 29.3,33.4 27.6,41.4 22,35.6 16.4,41.4 14.7,33.4 6.8,34.7 9.4,27 1.7,24.4 8.5,19.9 3.8,13.3 11.9,12.9 10.9,4.8 18.5,8.2"/>
+      <circle cx="22" cy="22" r="11.5" fill="#0b1a33"/>
+      <circle cx="17.8" cy="20" r="1.6" fill="#e6c452"/><circle cx="26.2" cy="20" r="1.6" fill="#e6c452"/>
+      <path d="M19 24.5h6l-3 3.2z" fill="#e6c452"/><path d="M22 27.7v2.3M18.5 30.5q3.5 2 7 0" stroke="#e6c452" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+    </svg>
+    <span><b>DATA PATRIMONIO</b><small id="tag"></small></span>
+  </a>
+  <div class="right">
+    <button class="pill fbnav" type="button" id="fbTop"></button>
+    <div role="group" aria-label="Language" style="display:flex;gap:4px">
+      <button class="pill" type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button class="pill" type="button" data-lang="es" aria-pressed="false">ES</button>
+    </div>
+  </div>
+</header>
+<nav class="topnav" id="topnav" aria-label="DATA Patrimonio"></nav>
+
+<section class="hero" data-view="inicio"><h1 id="heroT"></h1><p id="heroP"></p>
+  <div class="cta"><a class="btn go" href="#start" id="ctaBtn"></a><span class="trust" id="trust"></span></div></section>
+<main class="wrap" id="start" aria-live="polite" data-view="inicio valua">
+  <div class="bar" id="bar"></div>
+  <div class="stepnames" id="stepnames"></div>
+  <div class="card" id="panel"></div>
+</main>
+<section class="band" id="how" data-view="inicio como"></section>
+<section class="band" id="market" data-view="inicio"></section>
+<section class="band" id="seguridad" data-view="seguridad"></section>
+<section class="band" id="faq" data-view="preguntas"></section>
+<section class="band" id="contacto" data-view="contacto"></section>
+<footer id="foot"></footer>
+<div id="chatRoot"></div>
+<div id="fbRoot"></div>
+
+<!-- load order matters: engine (prices) → i18n (words) → app (the funnel) -->
+<script src="/engine.js"></script>
+<script src="/i18n.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

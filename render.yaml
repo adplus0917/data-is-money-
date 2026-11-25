@@ -1,0 +1,34 @@
+# Render Blueprint: one web service + one PostgreSQL database + a private disk for samples.
+# In Render: New → Blueprint → pick this repo. Render reads this file and builds everything.
+services:
+  - type: web
+    name: data-patrimonio
+    runtime: node
+    plan: starter            # paid plan needed for the persistent disk below
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    disk:
+      name: samples
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: data-patrimonio-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false          # Render asks you to type it in during setup
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: NOTIFY_WEBHOOK_URL
+        sync: false
+      - key: OUTBOX_FROM
+        value: hola@dataismoney.ai
+databases:
+  - name: data-patrimonio-db
+    plan: basic-256mb
