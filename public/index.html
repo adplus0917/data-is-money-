@@ -31,8 +31,28 @@
 </header>
 <nav class="topnav" id="topnav" aria-label="DATA Patrimonio"></nav>
 
-<section class="hero" data-view="inicio"><h1 id="heroT"></h1><p id="heroP"></p>
-  <div class="cta"><a class="btn go" href="#start" id="ctaBtn"></a><span class="trust" id="trust"></span></div></section>
+<section class="hero" data-view="inicio">
+  <canvas id="hero-canvas" aria-hidden="true"></canvas>
+  <div class="hero-veil" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <h1 id="heroT"></h1><p id="heroP"></p>
+      <div class="cta"><a class="btn go" href="#start" id="ctaBtn"></a>
+        <button class="btn-sound" id="sound-toggle" type="button" aria-pressed="false" aria-label="Activar o silenciar la música ambiental">
+          <svg id="sound-icon-off" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" fill="currentColor"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg id="sound-icon-on" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:none;"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" fill="currentColor"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18 6.8a7.4 7.4 0 0 1 0 10.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span id="sound-label">Escuchar música</span><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="dot" aria-hidden="true"></span>
+        </button>
+      </div>
+      <p class="hero-trust"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 10.2-4-1.8-7-5.6-7-10.2V5.6L12 3Z" stroke="#c9a227" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 11.8l2.1 2.1L15.4 9.6" stroke="#e6c452" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="trust" id="trust"></span></p>
+      <audio id="ambient-audio" src="/assets/ambient-bed.mp3" loop preload="auto"></audio>
+    </div>
+    <div class="video-frame">
+      <video src="/assets/hero-owner.mp4" autoplay muted loop playsinline preload="auto" aria-label="Dueño de negocio trabajando en su computadora"></video>
+      <span class="video-chip"><span class="pulse" aria-hidden="true"></span><span id="heroChip"></span></span>
+    </div>
+  </div>
+</section>
 <main class="wrap" id="start" aria-live="polite" data-view="valua">
   <div class="bar" id="bar"></div>
   <div class="stepnames" id="stepnames"></div>
@@ -51,5 +71,6 @@
 <script src="/engine.js"></script>
 <script src="/i18n.js"></script>
 <script src="/app.js"></script>
+<script src="/hero-fx.js"></script>
 </body>
 </html>

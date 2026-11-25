@@ -180,3 +180,61 @@ td select{min-height:40px;border-radius:8px;background:var(--field);border:1px s
 #sigCanvas{width:100%;height:180px;border:1.5px solid var(--line);border-radius:10px;background:#fff;touch-action:none;cursor:crosshair}
 .sigerr{color:var(--bad);font-size:14px;margin-top:8px}
 .sigerr:empty{display:none}
+
+/* --- approved hero treatment (Nov 25 2026): gold rain + embers canvas,
+       owner-at-laptop video in a gold frame, ambient-music toggle.
+       Ported from the approved preview; overrides the plain .hero above. --- */
+.hero{position:relative;overflow:hidden;max-width:none;margin:0;padding:0;
+  background:radial-gradient(1100px 520px at 85% -10%, rgba(201,162,39,.10), transparent 60%),
+  linear-gradient(180deg,#060f22 0%,var(--bg) 78%)}
+#hero-canvas{position:absolute;inset:0;z-index:1;pointer-events:none;display:block}
+.hero-veil{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:linear-gradient(100deg, rgba(6,15,34,.88) 0%, rgba(6,15,34,.66) 46%, rgba(6,15,34,.30) 78%, rgba(6,15,34,.48) 100%),
+  radial-gradient(700px 420px at 22% 45%, rgba(6,15,34,.30), transparent 70%)}
+.hero-inner{position:relative;z-index:2;max-width:1240px;margin:0 auto;
+  display:grid;grid-template-columns:1.04fr .96fr;gap:60px;align-items:center;
+  padding:64px max(4vw,16px) 76px}
+.hero-inner h1{font-size:clamp(34px,5.2vw,58px);font-weight:800}
+.hero-inner p{color:var(--mute);margin:20px 0 0;font-size:17px;max-width:34rem}
+.hero-inner .cta{margin-top:30px}
+.hero-inner .cta .btn.go{margin-left:0}
+.hero-trust{margin-top:20px;font-size:14px;color:var(--mute);display:flex;align-items:center;gap:9px}
+.hero-trust svg{flex:0 0 auto}
+.hero-trust .trust{font-size:14px}
+.btn-sound{display:inline-flex;align-items:center;gap:9px;min-height:52px;padding:12px 20px;border-radius:12px;
+  background:rgba(11,26,51,.88);border:1.5px solid var(--line);color:var(--mute);
+  font-size:14px;font-weight:600;cursor:pointer;transition:border-color .2s ease,color .2s ease}
+.btn-sound:hover{border-color:var(--gold);color:var(--gold2)}
+.btn-sound .dot{width:8px;height:8px;border-radius:50%;background:#5b6b87;flex:0 0 auto;transition:background .2s ease,box-shadow .2s ease}
+.btn-sound[aria-pressed=true]{color:var(--gold2);border-color:var(--gold)}
+.btn-sound[aria-pressed=true] .dot{background:var(--gold2);box-shadow:0 0 10px rgba(230,196,82,.9)}
+.btn-sound[aria-pressed=false] .dot{animation:soundInvite 1.6s ease-in-out infinite}
+@keyframes soundInvite{0%,100%{box-shadow:0 0 0 0 rgba(230,196,82,0);background:#5b6b87}50%{box-shadow:0 0 0 6px rgba(230,196,82,.18);background:var(--gold2)}}
+.btn-sound svg{flex:0 0 auto}
+.btn-sound .eq{display:none;align-items:flex-end;gap:2.5px;height:14px;flex:0 0 auto}
+.btn-sound .eq i{display:block;width:3px;border-radius:2px;background:var(--gold2);height:6px}
+.btn-sound[aria-pressed=true] .eq{display:inline-flex}
+.btn-sound[aria-pressed=true] .eq i{animation:eqBounce .9s ease-in-out infinite}
+.btn-sound[aria-pressed=true] .eq i:nth-child(2){animation-delay:.22s}
+.btn-sound[aria-pressed=true] .eq i:nth-child(3){animation-delay:.44s}
+@keyframes eqBounce{0%,100%{height:5px}50%{height:14px}}
+.video-frame{position:relative;border-radius:22px;padding:10px;
+  background:linear-gradient(160deg, rgba(230,196,82,.5), rgba(201,162,39,.14) 40%, rgba(201,162,39,.3));
+  box-shadow:0 30px 80px rgba(0,0,0,.5), 0 0 90px rgba(201,162,39,.16)}
+.video-frame video{display:block;width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:14px;background:#081226}
+.video-chip{position:absolute;left:26px;bottom:26px;display:inline-flex;align-items:center;gap:8px;
+  background:rgba(6,15,34,.78);border:1px solid var(--line);border-radius:999px;
+  padding:8px 14px;font-size:12.5px;font-weight:600;color:#c6cedd}
+.video-chip .pulse{width:7px;height:7px;border-radius:50%;background:var(--gold2);box-shadow:0 0 8px rgba(230,196,82,.9);flex:0 0 auto}
+@media(max-width:960px){
+  .hero-inner{grid-template-columns:1fr;gap:44px;padding:44px max(4vw,16px) 56px}
+  .video-frame{max-width:520px}
+}
+@media(max-width:600px){
+  .video-frame{max-width:none}
+  .hero-inner .cta .btn.go{flex:1}
+  .btn-sound{width:100%;justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){
+  .btn-sound .dot,.btn-sound .eq i{animation:none!important}
+}

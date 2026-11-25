@@ -218,6 +218,8 @@ function render() {
   document.documentElement.lang = S.lang;
   document.querySelectorAll("[data-lang]").forEach(b => b.setAttribute("aria-pressed", b.dataset.lang === S.lang));
   $("tag").textContent = l.tag; $("heroT").textContent = l.heroT; $("heroP").textContent = l.heroP; $("ctaBtn").textContent = l.cta; $("trust").textContent = l.trust; $("foot").textContent = l.foot;
+  const hChip = $("heroChip"); if (hChip) hChip.textContent = l.heroChip;
+  const sLbl = $("sound-label"), sAu = $("ambient-audio"); if (sLbl) sLbl.textContent = (sAu && !sAu.paused) ? l.soundOn : l.soundOff;
   $("fbTop").textContent = "💬 " + l.fbNav;
   $("topnav").innerHTML = Object.entries(l.nav).map(([k, t]) => `<button type="button" class="navtab" data-nav="${k}" aria-pressed="${S.view === k}">${t}</button>`).join("");
   document.querySelectorAll("[data-view]").forEach(el => el.classList.toggle("hide", !el.dataset.view.split(" ").includes(S.view)));
