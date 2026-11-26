@@ -111,7 +111,7 @@ function panelHTML() {
   return `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>${l.adT}</h2><p class="sub">${l.adSub}</p></div>
     <div style="margin-left:auto;display:flex;gap:8px"><a class="pill" href="/">${l.backFunnel}</a><button class="pill" type="button" id="logout">${l.logout}</button></div></div>
    ${err ? `<p class="err">${esc(err)}</p>` : ""}
-   <div class="kpis"><div><b>${rows.length}</b><span>${l.k1}</span></div><div><b>${kusd(pipe)}</b><span>${l.k2}</span></div><div><b>${rows.filter(r => r.status === "Nuevo" || r.status === "Muestra recibida").length}</b><span>${l.k3}</span></div><div><b>${frows.length}</b><span>${l.k4}</span></div></div>
+   <div class="kpis"><div><b>${rows.length}</b><span>${l.k1}</span></div><div><b>${kusd(pipe)}</b><span>${l.k2}</span></div><div><b>${rows.filter(r => r.status === "Nuevo" || r.status === "Muestra recibida").length}</b><span>${l.k3}</span></div><div><b>${frows.length}</b><span>${l.k4}</span></div><div><b>${brows.length}</b><span>${l.k5}</span></div></div>
    <div class="tabs" role="group">${tbs}</div>${body}`;
 }
 
