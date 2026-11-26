@@ -106,6 +106,40 @@ function postgres(url) {
       const { rows } = await pool.query(`SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT 5000`);
       return rows;
     },
+    /* ----- appointment bookings (screening profile rides along) ----- */
+    async createBooking(bk) {
+      const { rows: [r] } = await pool.query(
+        `INSERT INTO bookings (name, email, phone, appt_date, window, note, lang, folio, profile, zoom_invitees)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *, appt_date::text AS appt_date`,
+        [bk.name, bk.email, bk.phone || null, bk.appt_date, bk.window, bk.note || null, bk.lang || null, bk.folio || null,
+         JSON.stringify(bk.profile), bk.zoom_invitees || []]);
+      return r;
+    },
+    async listBookings() {
+      const { rows } = await pool.query(`SELECT *, appt_date::text AS appt_date FROM bookings ORDER BY appt_date, created_at DESC LIMIT 5000`);
+      return rows;
+    },
+    async getBooking(id) {
+      const { rows } = await pool.query(`SELECT *, appt_date::text AS appt_date FROM bookings WHERE id=$1`, [id]);
+      return rows[0] || null;
+    },
+    async updateBookingStatus(id, status) {
+      const { rows: [r] } = await pool.query(`UPDATE bookings SET status=$2 WHERE id=$1 RETURNING *, appt_date::text AS appt_date`, [id, status]);
+      return r || null;
+    },
+    async setBookingFolio(id, folio) {
+      const { rowCount } = await pool.query(`UPDATE bookings SET folio=$2 WHERE id=$1 AND folio IS NULL`, [id, folio]);
+      return rowCount > 0;
+    },
+    async updateBookingZoom(id, z) {
+      const sets = [], v = [];
+      for (const k of ["zoom_status", "zoom_meeting_id", "zoom_join_url", "zoom_start_url", "zoom_invitees", "zoom_note"]) if (z[k] !== undefined) { v.push(z[k]); sets.push(`${k}=$${v.length}`); }
+      if (z.zoom_status === "created") sets.push("zoom_created_at = now()");
+      if (!sets.length) return null;
+      v.push(id);
+      const { rows: [r] } = await pool.query(`UPDATE bookings SET ${sets.join(", ")} WHERE id=$${v.length} RETURNING *, appt_date::text AS appt_date`, v);
+      return r || null;
+    },
     async listSubmissions() {
       const { rows } = await pool.query(
         `SELECT s.*, COALESCE((SELECT json_agg(json_build_object('id',f.id,'name',f.original_name,'size',f.size_bytes) ORDER BY f.id)
@@ -272,7 +306,7 @@ function jsonFile(dir) {
   let chain = Promise.resolve();
   const locked = fn => (chain = chain.then(fn, fn));            // one write at a time
   const load = () => { let d; try { d = JSON.parse(fs.readFileSync(file, "utf8")); } catch { d = {}; }
-    return Object.assign({ counters: {}, submissions: [], samples: [], feedback: [], history: [], ids: 0, chatSessions: [], chatMessages: [], contactMessages: [], staffUsers: [], outbox: [], offers: [], partnerMessages: [], fileMessages: [], checklist: [], fileNotes: {} }, d); };
+    return Object.assign({ counters: {}, submissions: [], samples: [], feedback: [], history: [], ids: 0, chatSessions: [], chatMessages: [], contactMessages: [], bookings: [], staffUsers: [], outbox: [], offers: [], partnerMessages: [], fileMessages: [], checklist: [], fileNotes: {} }, d); };
   const save = d => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file + ".tmp", JSON.stringify(d, null, 1)); fs.renameSync(file + ".tmp", file); };
   const strip = s => { const { upload_token_hash, ...r } = s; return r; };
 
@@ -328,6 +362,33 @@ function jsonFile(dir) {
       d.contactMessages.push(r); save(d); return r;
     }),
     async listContactMessages() { return load().contactMessages.slice().reverse(); },
+    /* ----- appointment bookings (JSON-file mirrors) ----- */
+    createBooking: bk => locked(() => {
+      const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), status: "pending",
+        zoom_status: "none", zoom_meeting_id: null, zoom_join_url: null, zoom_start_url: null, zoom_created_at: null, zoom_note: null,
+        name: bk.name, email: bk.email, phone: bk.phone || null, appt_date: bk.appt_date, window: bk.window, note: bk.note || null,
+        lang: bk.lang || null, folio: bk.folio || null, profile: bk.profile, zoom_invitees: bk.zoom_invitees || [] };
+      d.bookings.push(r); save(d); return r;
+    }),
+    async listBookings() { return load().bookings.slice().sort((a, b) => (a.appt_date < b.appt_date ? -1 : a.appt_date > b.appt_date ? 1 : b.id - a.id)); },
+    async getBooking(id) { return load().bookings.find(x => x.id === Number(id)) || null; },
+    updateBookingStatus: (id, status) => locked(() => {
+      const d = load(), r = d.bookings.find(x => x.id === Number(id));
+      if (!r) return null;
+      r.status = status; save(d); return r;
+    }),
+    setBookingFolio: (id, folio) => locked(() => {
+      const d = load(), r = d.bookings.find(x => x.id === Number(id));
+      if (!r || r.folio) return false;
+      r.folio = folio; save(d); return true;
+    }),
+    updateBookingZoom: (id, z) => locked(() => {
+      const d = load(), r = d.bookings.find(x => x.id === Number(id));
+      if (!r) return null;
+      for (const k of ["zoom_status", "zoom_meeting_id", "zoom_join_url", "zoom_start_url", "zoom_invitees", "zoom_note"]) if (z[k] !== undefined) r[k] = z[k];
+      if (z.zoom_status === "created") r.zoom_created_at = new Date().toISOString();
+      save(d); return r;
+    }),
     updateStatus: (folio, status) => locked(() => {
       const d = load(), s = d.submissions.find(x => x.folio === folio);
       if (!s) return false;

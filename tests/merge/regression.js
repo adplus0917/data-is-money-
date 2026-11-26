@@ -218,6 +218,37 @@ const MAN = [true, true, true, true, true];
     ok(Array.isArray(r.b) && r.b.some(m => m.email === "ana@empresa.com" && m.track === "compra_directa"), "HTTP: email-form message appears in the admin panel WITH its deal track");
     const csv = await (await fetch(W + "/api/admin/export.csv?table=contact", { headers: { Cookie: cookie } })).text();
     ok(/id,created_at,name,email,track,message/.test(csv) && csv.includes("compra_directa"), "HTTP: contact CSV export carries the track column and the single deal value");
+
+    /* appointment booking (Nov 25 2026): funnel ends by booking the call */
+    const days = opt.bookingDays();
+    ok(days.length === 5 && days.every(d => d.weekday >= 1 && d.weekday <= 5), "booking: exactly 5 ET business days (Mon–Fri) are offered");
+    r = await j(W + "/api/bookings/days");
+    ok(r.s === 200 && Array.isArray(r.b.days) && r.b.days.length === 5 && r.b.tz === "America/New_York", "HTTP: offered-days endpoint matches the server validator");
+    const bpost = body => j(W + "/api/bookings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    r = await bpost({ name: "Ana Paz", email: "ana@empresa.jet", date: days[0].date, window: "morning", answers });
+    ok(r.s === 400 && r.b.error_code === "email_tld", "HTTP: booking rejects a .jet email with the shared validator (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", date: "2026-01-04", window: "morning", answers });
+    ok(r.s === 400, "HTTP: booking rejects a day that is not in the offered list (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", date: days[0].date, window: "evening", answers });
+    ok(r.s === 400, "HTTP: booking rejects an unknown time window (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", phone: "+1 813 555 0100", date: days[0].date, window: "afternoon", note: "Llamar después de las 2", answers, lang: "es" });
+    ok(r.s === 201 && r.b.id && r.b.date === days[0].date && r.b.window === "afternoon", "HTTP: booking created with an offered day + window (got " + r.s + ")");
+    const bkId = r.b.id;
+    const bkRow = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).bookings.find(x => x.id === bkId);
+    ok(bkRow && bkRow.status === "pending" && bkRow.profile && bkRow.profile.sector === "roof" && bkRow.profile.estimate_low > 0 && bkRow.profile.track === "compra_directa", "booking is stored with the FULL screening profile + server-computed estimate");
+    ok(bkRow && Array.isArray(bkRow.zoom_invitees) && bkRow.zoom_invitees.includes("gconcepcion@cpointehomes.com") && bkRow.zoom_invitees.includes("tkruse@cpointehomes.com") && bkRow.zoom_invitees.includes("migueladplus@gmail.com") && bkRow.zoom_status === "none", "booking carries the Zoom invitee list (Gil, Tyler, Miguel); no meeting exists yet");
+    r = await post({ answers, contact: { company_name: "X SA", owner_name: "Ana Paz", email: "ana@empresa.com", signature_name: "Ana Paz" }, manifest: MAN, booking_id: bkId });
+    ok(r.s === 201 && !!r.b.folio, "HTTP: submission after a booking is accepted (got " + r.s + ")");
+    const bkLinked = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).bookings.find(x => x.id === bkId);
+    ok(bkLinked && bkLinked.folio === r.b.folio, "booking is linked to the signed submission's folio");
+    r = await A("/api/admin/bookings");
+    ok(Array.isArray(r.b) && r.b.some(x => x.id === bkId && x.profile && x.profile.estimate_high > 0), "HTTP: booking appears in the team panel WITH its company profile");
+    r = await j(W + "/api/admin/bookings/" + bkId, { method: "PATCH", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ status: "confirmed" }) });
+    ok(r.s === 200 && r.b.booking.status === "confirmed", "HTTP: panel moves a booking pending → confirmed");
+    r = await j(W + "/api/admin/bookings/" + bkId + "/zoom", { method: "POST", headers: { Cookie: cookie } });
+    ok(r.s === 200 && r.b.queued === true && r.b.configured === false && r.b.booking.zoom_status === "queued" && !r.b.booking.zoom_join_url, "HTTP: Create Zoom with no credentials QUEUES the intent and fakes NO meeting link");
+    const zoomMod = require(path.join(ROOT, "server/zoom.js"));
+    ok(zoomMod.configured() === false && zoomMod.meetingPayload({ name: "Ana", email: "ana@empresa.com", appt_date: days[0].date, window: "morning", profile: {} }).settings.auto_recording === "cloud", "zoom module: unconfigured in this env; the create payload always sets cloud auto-recording");
   } finally {
     child.kill("SIGTERM");
     fs.rmSync(dataDir, { recursive: true, force: true });

@@ -10,7 +10,7 @@ const VOLUMES = ["under1k","1kto10k","10kto50k","over50k"];
 const REVENUE = Object.keys(CONFIG.revenueBase);
 const FORMATS = Object.keys(CONFIG.formatFactor);
 const FREQUENCY = Object.keys(CONFIG.frequencyFactor);
-const TRACKS = ["compra_directa","licencia"];
+const TRACKS = ["compra_directa"];   // single deal path (Nov 25 2026): exclusive direct purchase only — no license track
 const STATUSES = ["Nuevo","Contactado","Papel enviado","Firmado","Muestra recibida","Verificado","Pagado","En el vault"];
 const MANIFEST_ITEMS = 5;
 
@@ -98,4 +98,64 @@ function checkContact(c) {
 
 const toEngineInput = a => ({ revenueBand: a.revenue_band, recordYears: a.record_years, employees: a.employees, dataTypes: a.data_types, format: a.format, frequency: a.frequency });
 
-module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail };
+/* ---------------------------------------------------------------------------
+   APPOINTMENT BOOKING (Nov 25 2026, Miguel's direction): campaign ads land
+   on the screening funnel; after the valuation the seller books a call.
+   Slots are whole-day picks + a time window, in America/New_York:
+   the next BOOKING_DAYS business days (Mon–Fri, ET), starting tomorrow ET.
+   The client renders the same list with the same algorithm (public/app.js
+   bookingDays); the server re-derives it here and rejects anything else,
+   so a tampered browser can't book a Sunday or a date three months out.
+   --------------------------------------------------------------------------- */
+const BOOKING_WINDOWS = ["morning", "afternoon"];
+const BOOKING_STATUSES = ["pending", "confirmed", "done"];
+const BOOKING_DAYS = 5;
+const BOOKING_TZ = "America/New_York";
+// The Zoom meeting for a booking is on Miguel's account; these are the
+// people who get the invite (Miguel's direction, Nov 25 2026).
+const ZOOM_INVITEES = ["gconcepcion@cpointehomes.com", "tkruse@cpointehomes.com", "migueladplus@gmail.com"];
+// Concrete start for each window when the Zoom meeting is created (ET).
+const BOOKING_WINDOW_START = { morning: "10:00:00", afternoon: "14:00:00" };
+
+// ET calendar parts for an instant, without depending on the host timezone.
+function etParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: BOOKING_TZ, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" }).formatToParts(d);
+  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+  return { y: +p.year, m: +p.month, d: +p.day, wd: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday) };
+}
+const ymd = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+// The offered appointment days: [{ date: "YYYY-MM-DD", weekday: 1..5 (Mon..Fri) }]
+function bookingDays(now = new Date()) {
+  const t = etParts(now);
+  const out = [];
+  const cur = new Date(Date.UTC(t.y, t.m - 1, t.d));
+  while (out.length < BOOKING_DAYS) {
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    const wd = cur.getUTCDay();
+    if (wd >= 1 && wd <= 5) out.push({ date: ymd(cur.getUTCFullYear(), cur.getUTCMonth() + 1, cur.getUTCDate()), weekday: wd });
+  }
+  return out;
+}
+
+// Returns { ok:true, booking } or { ok:false, error, error_code? }
+// The estimate is NOT taken from the body — index.js recomputes it from
+// the validated answers with the engine, like /api/submissions does.
+function checkBooking(b, now = new Date()) {
+  if (!b || typeof b !== "object") return { ok: false, error: "missing booking" };
+  const name = str(b.name);
+  const email = str(b.email, 200);
+  const phone = str(b.phone, 40);
+  const note = str(b.note, 500);
+  if (!name) return { ok: false, error: "name is required" };
+  const err = emailError(email);
+  if (err === "tld") return { ok: false, error_code: "email_tld", error: "That email ending is not a real domain — for example, .jet is not valid. Did you mean .com? Check the ending (.com, .net, .org…)" };
+  if (err) return { ok: false, error_code: "email_format", error: "That email is not in a valid format. It should look like name@company.com, with no spaces." };
+  const date = str(b.date, 10);
+  if (!bookingDays(now).some(x => x.date === date)) return { ok: false, error: "choose one of the offered appointment days" };
+  if (!BOOKING_WINDOWS.includes(b.window)) return { ok: false, error: "choose a morning or afternoon window" };
+  const a = checkAnswers(b.answers);
+  if (!a.ok) return { ok: false, error: a.error };
+  return { ok: true, booking: { name, email, phone: phone || null, note: note || null, appt_date: date, window: b.window, answers: a.answers } };
+}
+
+module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail, BOOKING_WINDOWS, BOOKING_STATUSES, BOOKING_DAYS, BOOKING_TZ, BOOKING_WINDOW_START, ZOOM_INVITEES, etParts, bookingDays, checkBooking };

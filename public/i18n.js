@@ -12,12 +12,14 @@ const O={
  freq:[["ongoing","Yes, it keeps growing","Sí, sigue creciendo"],["static","No, it's historical","No, es histórico"]],
  track:[["compra_directa","Direct purchase with exclusivity","Compra directa con exclusividad"],["licencia","License","Licencia"]],
  tier:[["Bronce","Bronze","Bronce"],["Plata","Silver","Plata"],["Oro","Gold","Oro"],["Platino","Platinum","Platino"]],
- status:[["Nuevo","New","Nuevo"],["Contactado","Contacted","Contactado"],["Papel enviado","Paper sent","Papel enviado"],["Firmado","Signed","Firmado"],["Muestra recibida","Sample received","Muestra recibida"],["Verificado","Verified","Verificado"],["Pagado","Paid","Pagado"],["En el vault","In the vault","En el vault"]]
+ status:[["Nuevo","New","Nuevo"],["Contactado","Contacted","Contactado"],["Papel enviado","Paper sent","Papel enviado"],["Firmado","Signed","Firmado"],["Muestra recibida","Sample received","Muestra recibida"],["Verificado","Verified","Verificado"],["Pagado","Paid","Pagado"],["En el vault","In the vault","En el vault"]],
+ bkstatus:[["pending","Pending","Pendiente"],["confirmed","Confirmed","Confirmada"],["done","Done","Completada"]],
+ bkzoom:[["none","Not created","Sin crear"],["queued","Queued","En cola"],["created","Created","Creado"],["failed","Failed","Falló"]]
 };
 const T={
 en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI companies need the real-world experience of companies like yours. Your invoices, quotes, contracts and emails from years of work are worth money. Find out how much in 2 minutes.",cta:"Value my data →",trust:"No commitment. Your information stays private and secure.",soundOff:"Listen to music",soundOn:"Music on",heroChip:"Years of work, turned into value",
- steps:["Your company","Your data","Size & format","Your valuation","Agreement & signature","Done"],stepOf:i=>`Step ${i} of 6`,
- subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Two pages. No hidden fine print.","You're in."],
+ steps:["Your company","Your data","Size & format","Your valuation","Book your appointment","Agreement & signature","Done"],stepOf:(i,n)=>`Step ${i} of ${n}`,
+ subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Pick a day and a time window — we call you to go over your valuation.","Two pages. No hidden fine print.","You're in."],
  back:"Back",next:"Continue",see:"See my valuation",toContract:"Continue to agreement",submit:"Sign and submit",
  qSector:"Sector",gT:"Construction & trades",gO:"Every other industry",qBiz:"Years in business",qEmp:"Employees",qRec:"Years of records",qTypes:"Record types (choose all you have)",qVol:"Approximate number of records",
  qRev:"Annual revenue",qFmt:"Data format",qFreq:"Does the data keep growing?",qTrack:"How we buy your data",
@@ -57,8 +59,8 @@ en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI c
  engT:"Engine settings (02-valuation-engine.js)",valT:"Validation profiles from the build kit",vcols:["Profile","Inputs","Point","Range","Tier","Score","Kit expects","Result"],pass:"Pass",miss:"Misses",
  valNote:"Constants were not changed to force a pass, as the kit instructs. Profile A has no record types named, so it is run with the 3 lowest-weight types and with 3 including email and accounting. Profile D asks for $20–50M revenue; the engine has one band for everything over $20M.",backFunnel:"Back to the seller funnel",stepWord:"Step",resultWord:"Done screen"},
 es:{tag:"Tus datos son patrimonio",heroT:"Tus datos son patrimonio.",heroP:"Las empresas de AI necesitan la experiencia real de empresas como la tuya. Tus facturas, cotizaciones, contratos y correos de años de trabajo valen dinero. Descubre cuánto en 2 minutos.",cta:"Valorar mis datos →",trust:"Sin compromiso. Tu información se mantiene privada y segura.",soundOff:"Escuchar música",soundOn:"Música activada",heroChip:"Años de trabajo, convertidos en valor",
- steps:["Tu empresa","Tus datos","Tamaño y formato","Tu valoración","Contrato y firma","Listo"],stepOf:i=>`Paso ${i} de 6`,
- subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
+ steps:["Tu empresa","Tus datos","Tamaño y formato","Tu valoración","Reserva tu cita","Contrato y firma","Listo"],stepOf:(i,n)=>`Paso ${i} de ${n}`,
+ subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Elige un día y un horario — te llamamos para hablar de tu valoración.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
  back:"Atrás",next:"Continuar",see:"Ver mi valoración",toContract:"Continuar al contrato",submit:"Firmar y enviar",
  qSector:"Sector",gT:"Construcción y oficios",gO:"Todas las demás industrias",qBiz:"Años en el negocio",qEmp:"Empleados",qRec:"Años de registros",qTypes:"Tipos de registro (elige todos los que tengas)",qVol:"Volumen aproximado de registros",
  qRev:"Ingresos anuales",qFmt:"Formato de los datos",qFreq:"¿Los datos siguen creciendo?",qTrack:"Cómo compramos tus datos",
@@ -172,4 +174,31 @@ Object.assign(T.es,{
  gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre y tu correo — ahí te enviamos también los siguientes pasos.",
  gateName:"Tu nombre",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
  gateErrName:"Por favor, dinos tu nombre.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)"
+});
+
+/* appointment booking (Nov 25 2026, Miguel's direction): the step right
+   after the valuation. Campaign ads point at the screening; the flow
+   ends by booking the call. The Zoom link is NEVER shown here — it
+   follows by email once the team confirms (no fake links). */
+Object.assign(T.en,{
+ bkNext:"Book your appointment →",bkContactL:"We'll contact you at:",bkDayL:"Choose a day",bkWinL:"Choose a time window",
+ bkMorning:"Morning",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Afternoon",bkAfternoonH:"1:00 – 5:00 PM ET",
+ bkNoteL:"Anything we should know? (optional)",bkNotePh:"For example: the best number to reach you, or what you'd like to cover on the call…",
+ bkConfirm:"Confirm my appointment",bkSkip:"Continue without an appointment",bkErrPick:"Choose a day and a time window first.",
+ bkDoneT:"Your appointment is booked!",bkFor:"Your call:",
+ bkDoneP:"We'll contact you to confirm your appointment. Your Zoom link will arrive by email once your appointment is confirmed.",
+ bkContinue:"Continue to the agreement",
+ tabBookings:"Appointments",bkCols:["Booked","Appointment","Name","Email","WhatsApp","Company profile","Estimate","Status","Zoom","Note"],bkEmpty:"No appointments yet. Bookings appear here the moment a seller reserves a slot.",
+ bkZoomBtn:"Create Zoom",bkZoomFor:"Invitees: Gil, Tyler, Miguel"
+});
+Object.assign(T.es,{
+ bkNext:"Reserva tu cita →",bkContactL:"Te contactamos en:",bkDayL:"Elige un día",bkWinL:"Elige un horario",
+ bkMorning:"Mañana",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Tarde",bkAfternoonH:"1:00 – 5:00 PM ET",
+ bkNoteL:"¿Algo que debamos saber? (opcional)",bkNotePh:"Por ejemplo: el mejor número para llamarte, o qué quieres cubrir en la llamada…",
+ bkConfirm:"Confirmar mi cita",bkSkip:"Continuar sin cita",bkErrPick:"Primero elige un día y un horario.",
+ bkDoneT:"¡Tu cita quedó reservada!",bkFor:"Tu llamada:",
+ bkDoneP:"Te contactamos para confirmar tu cita. El enlace de Zoom te llega por correo cuando tu cita esté confirmada.",
+ bkContinue:"Continuar al contrato",
+ tabBookings:"Citas",bkCols:["Reservada","Cita","Nombre","Correo","WhatsApp","Perfil de la empresa","Estimado","Estado","Zoom","Nota"],bkEmpty:"Sin citas todavía. Las reservas aparecen aquí en cuanto un vendedor aparta su horario.",
+ bkZoomBtn:"Crear Zoom",bkZoomFor:"Invitados: Gil, Tyler, Miguel"
 });

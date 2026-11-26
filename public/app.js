@@ -56,6 +56,10 @@ S.chat = S.chat || { open: false, sessionId: null, msgs: [], emailOpen: false, e
    visitor leaves name + email; the lead is saved via /api/contact into
    the existing contact_messages capture (team panel → Messages). */
 S.gate = S.gate || { name: "", email: "", phone: "", done: false, err: "", busy: false };
+/* appointment booking (Nov 25 2026): the step right after the valuation.
+   Contact comes from the gate (no re-typing); the server stores the
+   booking with the full screening profile attached. */
+S.book = S.book || { date: "", window: "", note: "", done: false, err: "", busy: false, id: null };
 const save = () => SS.set("dp.session", S);
 const L = () => T[S.lang];
 const lab = (list, code) => { const r = O[list].find(x => x[0] === code); return r ? (S.lang === "es" ? r[2] : r[1]) : (code || "—"); };
@@ -69,11 +73,12 @@ const API = {
     if (!r.ok) throw Object.assign(new Error(j.error || "error"), { status: r.status });
     return j;
   },
-  submit(a, lang) {
+  submit(a, lang, bookingId) {
     const answers = { sector: a.sector, years_in_business: a.years_in_business, employees: a.employees, record_years: a.record_years, data_types: a.data_types, record_volume: a.record_volume, revenue_band: a.revenue_band, format: a.format, frequency: a.frequency, track: a.track };
     const contact = { company_name: a.company_name, owner_name: a.owner_name, email: a.email, phone: a.phone, signature_name: a.signature_name, signature_method: a.signature_method, signature_style: a.signature_style, signature_data: a.signature_method === "drawn" ? a.signature_data : "" };
-    return this.post("/api/submissions", { answers, contact, manifest: L().man.map((_, i) => a.man.includes(i)), lang });
+    return this.post("/api/submissions", { answers, contact, manifest: L().man.map((_, i) => a.man.includes(i)), lang, ...(bookingId ? { booking_id: bookingId } : {}) });
   },
+  book(body) { return this.post("/api/bookings", body); },
   async upload(folio, token, file) {
     const fd = new FormData(); fd.append("files", file);
     const r = await fetch(`/api/submissions/${encodeURIComponent(folio)}/samples`, { method: "POST", headers: { "X-Upload-Token": token }, body: fd });
@@ -102,7 +107,7 @@ const fbBox = step => `<div class="fb"><b>${L().fbT}</b><form data-fb="${step}">
 const navBtns = (i, label) => `<p class="err" id="err"></p><div class="nav">${i ? `<button type="button" class="btn" id="back">${L().back}</button>` : ""}<button type="button" class="btn go" id="next">${label}</button></div>`;
 
 function stepHTML() {
-  const l = L(), i = S.step, a = S.a, h = `<div class="kick">${l.stepOf(i + 1)}</div><h2>${l.steps[i]}</h2><p class="sub">${l.subs[i]}</p>`;
+  const l = L(), i = S.step, a = S.a, h = `<div class="kick">${l.stepOf(i + 1, l.steps.length)}</div><h2>${l.steps[i]}</h2><p class="sub">${l.subs[i]}</p>`;
   if (i === 0) return h + `<span class="q">${l.qSector}</span><div class="grp">${l.gT}</div>${opts("sector", "sector", "t")}<div class="grp">${l.gO}</div>${opts("sector", "sector", "o")}<span class="q">${l.qBiz}</span>${opts("years", "years_in_business")}<span class="q">${l.qEmp}</span>${opts("emp", "employees")}` + navBtns(i, l.next) + fbBox(1);
   if (i === 1) return h + `<span class="q">${l.qRec}</span>${opts("years", "record_years")}<span class="q">${l.qTypes}</span><div class="opts">${O.types.map(([c]) => `<button type="button" class="opt" data-type="${c}" aria-pressed="${a.data_types.includes(c)}">${esc(lab("types", c))}</button>`).join("")}</div><span class="q">${l.qVol}</span>${opts("vol", "record_volume")}` + navBtns(i, l.next) + fbBox(2);
   if (i === 2) return h + `<span class="q">${l.qRev}</span>${opts("rev", "revenue_band")}<span class="q">${l.qFmt}</span>${opts("fmt", "format")}<span class="q">${l.qFreq}</span><div class="opts wide">${O.freq.map(([c]) => `<button type="button" class="opt" data-k="frequency" data-v="${c}" aria-pressed="${a.frequency === c}">${esc(lab("freq", c))}</button>`).join("")}</div><span class="q">${l.qTrack}</span><div class="dealcard"><span class="dealname">${esc(lab("track", "compra_directa"))}</span><small>${l.trackD.compra_directa}</small></div>` + navBtns(i, l.see) + fbBox(3);
@@ -113,23 +118,24 @@ function stepHTML() {
     return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num">${usd(v.low)} – ${usd(v.high)}</div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
      <div class="score"><span>${l.scoreL}</span><div class="m"><i style="width:${v.score}%"></i></div><b>${v.score}/100</b></div></div>
      <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div></div>
-     <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.toContract) + fbBox(4);
+     <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.bkNext) + fbBox(4);
   }
-  if (i === 4) {
+  if (i === 4) return bookingHTML();
+  if (i === 5) {
     const today = new Date().toLocaleDateString(S.lang === "es" ? "es-US" : "en-US", { year: "numeric", month: "long", day: "numeric" });
     const f = (k, lb, type, ac) => `<div class="f"><label for="f_${k}">${lb}</label><input id="f_${k}" data-f="${k}" type="${type}" autocomplete="${ac}" maxlength="160" value="${esc(a[k])}">${k === "email" ? `<div class="emsg" id="emailMsg" role="alert">${esc(emailMsg(l))}</div>` : ""}</div>`;
     return h + `<p class="intro">${l.intro}</p><div class="fields">${f("company_name", l.fCo, "text", "organization")}${f("owner_name", l.fOwner, "text", "name")}${f("email", l.fEmail, "email", "email")}${f("phone", l.fPhone, "tel", "tel")}</div>
      <h3 style="font-size:18px;margin-top:24px">${l.agT} <span class="draft">${S.lang === "es" ? "BORRADOR" : "DRAFT"}</span></h3><div class="agree" tabindex="0">${AG[S.lang].map(([tr, t, p]) => `<div class="${tr && tr === a.track ? "hl" : ""}"><h3>${t}</h3><p>${p}</p></div>`).join("")}</div>
      <h3 style="font-size:18px;margin-top:24px">${l.manT}</h3><div style="margin-top:8px">${l.man.map((m, n) => `<label class="ck"><input type="checkbox" data-man="${n}" ${a.man.includes(n) ? "checked" : ""}><span>${m}</span></label>`).join("")}</div>
-     <div class="fields"><div class="f"><label>${l.sigL}</label><button type="button" class="sigbox" id="sigBox" aria-haspopup="dialog">${a.signature_done ? (a.signature_method === "drawn" && a.signature_data ? `<img src="${a.signature_data}" alt="${esc(a.signature_name)}"><span class="chosen">${l.sigChosen}</span>` : `<span class="sigpreview ${sigClass(a.signature_style)}">${esc(a.signature_name)}</span><span class="chosen">${l.sigChosen}</span>`) : `<b>✍ ${l.sigClick}</b><span>${l.sigHint}</span>`}</button></div><div class="f"><label for="f_date">${l.dateL}</label><input id="f_date" value="${today}" readonly></div></div>` + navBtns(i, l.submit) + fbBox(5) + (S.sigOpen ? sigModalHTML() : "");
+     <div class="fields"><div class="f"><label>${l.sigL}</label><button type="button" class="sigbox" id="sigBox" aria-haspopup="dialog">${a.signature_done ? (a.signature_method === "drawn" && a.signature_data ? `<img src="${a.signature_data}" alt="${esc(a.signature_name)}"><span class="chosen">${l.sigChosen}</span>` : `<span class="sigpreview ${sigClass(a.signature_style)}">${esc(a.signature_name)}</span><span class="chosen">${l.sigChosen}</span>`) : `<b>✍ ${l.sigClick}</b><span>${l.sigHint}</span>`}</button></div><div class="f"><label for="f_date">${l.dateL}</label><input id="f_date" value="${today}" readonly></div></div>` + navBtns(i, l.submit) + fbBox(6) + (S.sigOpen ? sigModalHTML() : "");
   }
   const first = (a.owner_name || "").trim().split(/\s+/)[0] || "";
   const st = s => s.state === "ok" ? l.upOk : s.state === "fail" ? (s.msg || l.upFail) : "…";
-  return `<div class="kick">${l.stepOf(6)}</div><h2>${esc(l.doneH(first, S.folio))}</h2><p class="sub">${l.subs[5]}</p><div class="folio num">${esc(S.folio)}</div>
+  return `<div class="kick">${l.stepOf(7, l.steps.length)}</div><h2>${esc(l.doneH(first, S.folio))}</h2><p class="sub">${l.subs[6]}</p><div class="folio num">${esc(S.folio)}</div>
    <p>${l.doneP}</p>
    <h3 style="font-size:18px;margin-top:20px">${l.upT}</h3><label class="drop" id="drop"><input type="file" id="fileIn" multiple><b>${l.drop}</b><br><span class="sub">${l.dropS}</span></label>
    <ul class="files">${S.samples.map(s => `<li><span>${esc(s.name)}</span><span>${(s.size / 1048576).toFixed(1)} MB · ${esc(st(s))}</span></li>`).join("")}</ul>
-   <div class="nav"><button type="button" class="btn" id="again">${l.again}</button></div>` + fbBox(6);
+   <div class="nav"><button type="button" class="btn" id="again">${l.again}</button></div>` + fbBox(7);
 }
 
 /* Price gate: shown in place of the step-4 estimate until the visitor's
@@ -140,7 +146,7 @@ function gateHTML() {
   const l = L(), g = S.gate;
   const emErr = g.email.trim() ? emailErrorClient(g.email) : null;
   const em = emErr === "tld" ? l.errEmailTld : emErr === "format" ? l.errEmailFmt : "";
-  return `<div class="kick">${l.stepOf(4)}</div><h2>${l.gateT}</h2><p class="sub">${l.gateS}</p>
+  return `<div class="kick">${l.stepOf(4, l.steps.length)}</div><h2>${l.gateT}</h2><p class="sub">${l.gateS}</p>
    <div class="fields">
     <div class="f"><label for="g_name">${l.gateName}</label><input id="g_name" data-g="name" type="text" autocomplete="name" maxlength="160" value="${esc(g.name)}"></div>
     <div class="f"><label for="g_email">${l.fEmail}</label><input id="g_email" data-g="email" type="email" autocomplete="email" maxlength="200" value="${esc(g.email)}"><div class="emsg" role="alert">${esc(em)}</div></div>
@@ -205,7 +211,7 @@ function valid() {
   if (S.step === 0 && !(a.sector && a.years_in_business && a.employees)) return l.e1;
   if (S.step === 1 && !(a.record_years && a.data_types.length && a.record_volume)) return l.e2;
   if (S.step === 2 && !(a.revenue_band && a.format && a.frequency)) return l.e3;
-  if (S.step === 4) {
+  if (S.step === 5) {
     if (!(a.company_name.trim() && a.owner_name.trim() && (a.email.trim() || a.phone.trim()) && a.man.length === l.man.length)) return l.e5;
     if (a.email.trim()) { const em = emailMsg(l); if (em) return em; }
     if (!a.signature_done) return l.errSigMissing;
@@ -340,11 +346,65 @@ function afterPick() {
 }
 
 /* ---------- actions ---------- */
+/* ----- appointment booking (step 5 of 7, right after the valuation) -----
+   Same algorithm as the server (server/options.js bookingDays): the next
+   5 America/New_York business days, morning/afternoon windows. The server
+   re-derives the list and validates, so this is display + convenience. */
+function bookingDaysClient() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  const cur = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)), out = [];
+  while (out.length < 5) {
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    const wd = cur.getUTCDay();
+    if (wd >= 1 && wd <= 5) out.push({ date: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}-${String(cur.getUTCDate()).padStart(2, "0")}`, weekday: wd });
+  }
+  return out;
+}
+const bkDayLabel = (date) => new Date(date + "T12:00:00Z").toLocaleDateString(S.lang === "es" ? "es-US" : "en-US", { timeZone: "UTC", weekday: "long", month: "long", day: "numeric" });
+const bkWinLabel = (w) => { const l = L(); return (w === "morning" ? l.bkMorning : l.bkAfternoon) + " · " + (w === "morning" ? l.bkMorningH : l.bkAfternoonH); };
+
+function bookingHTML() {
+  const l = L(), bk = S.book, g = S.gate;
+  const h = `<div class="kick">${l.stepOf(5, l.steps.length)}</div><h2>${l.steps[4]}</h2><p class="sub">${l.subs[4]}</p>`;
+  if (bk.done) {
+    return h + `<div class="est"><div class="lbl">${l.bkDoneT}</div><div class="num" style="font-size:24px">${esc(bkDayLabel(bk.date))}</div><div class="tier">${l.bkFor} ${esc(bkWinLabel(bk.window))}</div></div>
+     <p class="disc">${l.bkDoneP}</p>
+     <div class="nav"><button type="button" class="btn" id="back">${l.back}</button><button type="button" class="btn go" id="bkContinue">${l.bkContinue}</button></div>` + fbBox(5);
+  }
+  const days = bookingDaysClient();
+  if (bk.date && !days.some(d => d.date === bk.date)) bk.date = ""; // the offered list rolled past a stale pick
+  const dayBtns = days.map(d => `<button type="button" class="opt" data-bk="date" data-v="${d.date}" aria-pressed="${bk.date === d.date}">${esc(bkDayLabel(d.date))}</button>`).join("");
+  const winBtns = ["morning", "afternoon"].map(w => `<button type="button" class="opt" data-bk="window" data-v="${w}" aria-pressed="${bk.window === w}">${esc(w === "morning" ? l.bkMorning : l.bkAfternoon)}<small>${esc(w === "morning" ? l.bkMorningH : l.bkAfternoonH)}</small></button>`).join("");
+  return h + `<p class="intro">${l.bkContactL} <b>${esc(g.name)}</b> · ${esc(g.email)}${g.phone ? " · " + esc(g.phone) : ""}</p>
+   <span class="q">${l.bkDayL}</span><div class="opts wide">${dayBtns}</div>
+   <span class="q">${l.bkWinL}</span><div class="opts wide">${winBtns}</div>
+   <div class="f" style="margin-top:16px"><label for="bk_note">${l.bkNoteL}</label><textarea id="bk_note" data-bkn maxlength="500" placeholder="${esc(l.bkNotePh)}" style="width:100%;min-height:84px;font-size:16px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--field)">${esc(bk.note)}</textarea></div>
+   <p class="err" id="err">${esc(bk.err)}</p>
+   <div class="nav"><button type="button" class="btn" id="back">${l.back}</button><button type="button" class="btn" id="bkSkip">${l.bkSkip}</button><button type="button" class="btn go" id="bkGo" ${bk.busy ? "disabled" : ""}>${l.bkConfirm}</button></div>` + fbBox(5);
+}
+
+async function bookingSubmit() {
+  const l = L(), bk = S.book, g = S.gate, a = S.a;
+  if (bk.busy || bk.done) return;
+  if (!bk.date || !bk.window) { bk.err = l.bkErrPick; save(); render(); return; }
+  bk.busy = true; bk.err = ""; save(); render();
+  const answers = { sector: a.sector, years_in_business: a.years_in_business, employees: a.employees, record_years: a.record_years, data_types: a.data_types, record_volume: a.record_volume, revenue_band: a.revenue_band, format: a.format, frequency: a.frequency, track: a.track };
+  try {
+    const r = await API.book({ name: g.name.trim(), email: g.email.trim(), phone: g.phone.trim(), date: bk.date, window: bk.window, note: bk.note.trim(), answers, lang: S.lang });
+    bk.done = true; bk.id = r.id; bk.busy = false;
+    save(); render(); $("start").scrollIntoView({ block: "start" });
+  } catch (e) {
+    bk.busy = false;
+    bk.err = e.status === 400 && e.message && e.message !== "error" ? e.message : l.netErr;
+    save(); render();
+  }
+}
+
 async function submit(btn) {
   btn.disabled = true;
   try {
-    const r = await API.submit(S.a, S.lang);
-    S.folio = r.folio; S.token = r.uploadToken; S.step = 5; S.samples = [];
+    const r = await API.submit(S.a, S.lang, S.book.id);
+    S.folio = r.folio; S.token = r.uploadToken; S.step = 6; S.samples = [];
     render(); $("start").scrollIntoView({ block: "start" });
   } catch (e) {
     btn.disabled = false;
@@ -430,19 +490,23 @@ document.addEventListener("click", e => {
   if (b.dataset.k) { S.a[b.dataset.k] = b.dataset.v; render(); afterPick(); return; }
   if (b.dataset.type) { const k = b.dataset.type; S.a.data_types = S.a.data_types.includes(k) ? S.a.data_types.filter(x => x !== k) : [...S.a.data_types, k]; render(); afterPick(); return; }
   if (b.id === "gateGo") { stopAdv(); gateSubmit(); return; }
+  if (b.dataset.bk) { S.book[b.dataset.bk] = b.dataset.v; S.book.err = ""; render(); return; }
+  if (b.id === "bkGo") { stopAdv(); bookingSubmit(); return; }
+  if (b.id === "bkSkip" || b.id === "bkContinue") { stopAdv(); S.step = 5; save(); render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" }); return; }
   if (b.id === "back") { stopAdv(); S.step--; render(); return; }
   if (b.id === "next") {
     stopAdv();
     const m = valid(); if (m) { $("err").textContent = m; return; }
-    if (S.step === 4) { submit(b); return; }
+    if (S.step === 5) { submit(b); return; }
     S.step++; render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" }); return;
   }
-  if (b.id === "again") { stopAdv(); const keep = { lang: S.lang, view: S.view, chat: S.chat, contact: S.contact, gate: S.gate }; S = { step: 0, a: blank(), folio: null, token: null, samples: [], fbOpen: false, ...keep }; render(); $("start").scrollIntoView({ block: "start" }); }
+  if (b.id === "again") { stopAdv(); const keep = { lang: S.lang, view: S.view, chat: S.chat, contact: S.contact, gate: S.gate, book: S.book }; S = { step: 0, a: blank(), folio: null, token: null, samples: [], fbOpen: false, ...keep }; render(); $("start").scrollIntoView({ block: "start" }); }
 });
 document.addEventListener("input", e => {
   const el = e.target;
   if (el.dataset.f) { S.a[el.dataset.f] = el.value; save(); }
   if (el.dataset.g) { S.gate[el.dataset.g] = el.value; save(); }
+  if (el.dataset.bkn !== undefined) { S.book.note = el.value; save(); }
   if (el.dataset.cf) { S.contact[el.dataset.cf] = el.value; save(); }
   if (el.id === "chatEmailIn") { S.chat.email = el.value; save(); }
   if (el.id === "chatEmailMsg") { S.chat.emailMsg = el.value; save(); }

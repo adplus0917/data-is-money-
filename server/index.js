@@ -14,6 +14,7 @@ const storage = require("./storage");
 const auth = require("./auth");
 const { valueDataset, ENGINE_VERSION } = require("./engine");
 const opt = require("./options");
+const zoom = require("./zoom");
 const { answerChat } = require("./chat");
 
 const app = express();
@@ -67,7 +68,7 @@ app.use(express.json({ limit: "100kb" }));
 /* ---------- pages ---------- */
 app.get("/engine.js", (req, res) => res.type("application/javascript").sendFile(path.join(__dirname, "engine.js")));
 app.get("/admin", (req, res) => res.sendFile(path.join(PUBLIC, "admin.html")));
-app.use(express.static(PUBLIC, { extensions: ["html"], maxAge: "1h" }));
+app.use(express.static(PUBLIC, { extensions: ["html"], maxAge: "1h", setHeaders: (res, filePath) => { if (filePath.endsWith(".html")) { res.setHeader("Cache-Control", "no-cache"); } } }));
 app.get("/health", (req, res) => res.json({ ok: true, db: db.kind, engine: ENGINE_VERSION }));
 
 /* ---------- vault: uploads to the staging bucket + team vault API (when configured) ---------- */
@@ -106,6 +107,9 @@ app.post("/api/submissions", limiter(20, 10 * 60e3), async (req, res) => {
       upload_token_hash: crypto.createHash("sha256").update(uploadToken).digest("hex"),
     });
     notify(row).catch(() => {});
+    // If this seller booked an appointment earlier in the same session,
+    // tie the booking to the folio so the team sees one connected record.
+    if (Number(b.booking_id)) { try { await db.setBookingFolio(Number(b.booking_id), row.folio); } catch (e) { /* booking link is best-effort */ } }
     log({ actor: "seller:" + row.folio, action: "submission.signed", folio: row.folio, detail: { track: row.track, estimate: [row.estimate_low, row.estimate_high], ip: req.ip } });
     res.status(201).json({ folio: row.folio, valuation: v, uploadToken });
   } catch (e) {
@@ -202,6 +206,34 @@ app.post("/api/contact", limiter(20, 10 * 60e3), async (req, res) => {
   catch (e) { console.error(e); res.status(500).json({ error: "could not save" }); }
 });
 
+/* ---------- appointment booking (Nov 25 2026) ----------
+   The step after the valuation: the seller picks one of the next 5 ET
+   business days + a morning/afternoon window. The booking stores the
+   FULL screening profile (answers + the SERVER-computed estimate — the
+   client's numbers are never trusted) so the team panel shows the whole
+   company picture next to the appointment. No email/SMS is sent here:
+   the team confirms from the panel (and creates the Zoom from there). */
+app.post("/api/bookings", limiter(20, 10 * 60e3), async (req, res) => {
+  const chk = opt.checkBooking(req.body || {});
+  if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
+  try {
+    const bk = chk.booking;
+    const v = valueDataset(opt.toEngineInput(bk.answers));
+    const profile = { ...bk.answers, estimate_low: v.low, estimate_high: v.high, estimate_point: v.point, tier: v.tier, score: v.score, engine_version: ENGINE_VERSION };
+    const row = await db.createBooking({
+      name: bk.name, email: bk.email, phone: bk.phone, note: bk.note,
+      appt_date: bk.appt_date, window: bk.window,
+      lang: (req.body || {}).lang === "es" ? "es" : "en",
+      profile, zoom_invitees: opt.ZOOM_INVITEES,
+    });
+    log({ actor: "visitor:" + row.email, action: "booking.created", detail: { booking: row.id, date: row.appt_date, window: row.window, estimate: [v.low, v.high], ip: req.ip } });
+    res.status(201).json({ ok: true, id: row.id, date: row.appt_date, window: row.window });
+  } catch (e) { console.error("booking failed", e); res.status(500).json({ error: "could not save, please try again" }); }
+});
+// The offered days, so the client and the team see the same list the
+// server validates against (single source: server/options.js bookingDays).
+app.get("/api/bookings/days", (req, res) => res.json({ days: opt.bookingDays(), windows: opt.BOOKING_WINDOWS, tz: opt.BOOKING_TZ }));
+
 /* ---------- team panel API (password protected) ---------- */
 app.post("/api/admin/login", limiter(8, 60e3), (req, res) => {
   if (!auth.configured()) return res.status(503).json({ error: "ADMIN_PASSWORD is not set on the server" });
@@ -216,6 +248,42 @@ app.get("/api/admin/submissions", auth.requireAdmin, async (req, res) => res.jso
 app.get("/api/admin/feedback", auth.requireAdmin, async (req, res) => res.json(await db.listFeedback()));
 app.get("/api/admin/chats", auth.requireAdmin, async (req, res) => res.json(await db.listChats()));
 app.get("/api/admin/contact-messages", auth.requireAdmin, async (req, res) => res.json(await db.listContactMessages()));
+app.get("/api/admin/bookings", auth.requireAdmin, async (req, res) => res.json(await db.listBookings()));
+app.patch("/api/admin/bookings/:id", auth.requireAdmin, async (req, res) => {
+  const status = req.body && req.body.status;
+  if (!opt.BOOKING_STATUSES.includes(status)) return res.status(400).json({ error: "unknown status" });
+  const row = await db.updateBookingStatus(Number(req.params.id), status);
+  if (row) log({ actor: `admin@${req.ip}`, action: "booking.status", detail: { booking: row.id, status } });
+  row ? res.json({ ok: true, booking: row }) : res.status(404).json({ error: "booking not found" });
+});
+/* One-click Zoom (Miguel's rule: meeting on HIS account, invitees Gil +
+   Tyler + Miguel, cloud auto-recording + transcript at creation).
+   If the Zoom S2S credentials are not wired on this server yet, the
+   click only QUEUES the intent (zoom_status='queued', invitees on the
+   record) — it never invents a meeting link. When configured, the
+   meeting is created for real and the seller's invite is queued in the
+   email outbox (queued ≠ sent, like every outbox row). */
+app.post("/api/admin/bookings/:id/zoom", auth.requireAdmin, async (req, res) => {
+  const bk = await db.getBooking(Number(req.params.id));
+  if (!bk) return res.status(404).json({ error: "booking not found" });
+  if (bk.zoom_status === "created" && bk.zoom_join_url) return res.json({ ok: true, booking: bk, already: true });
+  if (!zoom.configured()) {
+    const row = await db.updateBookingZoom(bk.id, { zoom_status: "queued", zoom_invitees: opt.ZOOM_INVITEES, zoom_note: "Queued from the panel — Zoom API credentials (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET) are not wired on this server yet." });
+    log({ actor: `admin@${req.ip}`, action: "booking.zoom_queued", detail: { booking: bk.id, invitees: opt.ZOOM_INVITEES } });
+    return res.json({ ok: true, queued: true, configured: false, booking: row });
+  }
+  try {
+    const m = await zoom.createMeetingForBooking(bk);
+    const row = await db.updateBookingZoom(bk.id, { zoom_status: "created", zoom_meeting_id: m.meeting_id, zoom_join_url: m.join_url, zoom_start_url: m.start_url, zoom_invitees: opt.ZOOM_INVITEES, zoom_note: m.recording_on === true ? "Cloud auto-recording verified ON at read-back." : "Created; recording setting could not be verified at read-back — host confirms recording at start." });
+    await db.addOutbox({ kind: "appointment_zoom", channel: "email", to_email: bk.email, to_name: bk.name, subject: "DATA Patrimonio — tu cita por Zoom", body: `Hola ${bk.name},\n\nTu cita con DATA Patrimonio quedó agendada. Únete por Zoom aquí:\n${m.join_url}\n\nSi necesitas cambiar el horario, responde a este correo.\n\nDATA Patrimonio`, created_by: "panel:zoom" }).catch(() => {});
+    log({ actor: `admin@${req.ip}`, action: "booking.zoom_created", detail: { booking: bk.id, meeting: m.meeting_id, recording_on: m.recording_on, invitees: opt.ZOOM_INVITEES } });
+    res.json({ ok: true, configured: true, booking: row });
+  } catch (e) {
+    console.error("zoom create failed", e);
+    const row = await db.updateBookingZoom(bk.id, { zoom_status: "failed", zoom_note: String(e.message || e).slice(0, 300) });
+    res.status(502).json({ error: "zoom creation failed", booking: row });
+  }
+});
 app.patch("/api/admin/submissions/:folio", auth.requireAdmin, async (req, res) => {
   const status = req.body && req.body.status;
   if (!opt.STATUSES.includes(status)) return res.status(400).json({ error: "unknown status" });
@@ -237,11 +305,11 @@ const csvCell = v => {
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 };
 app.get("/api/admin/export.:fmt", auth.requireAdmin, async (req, res) => {
-  const [subs, fb, chats, contact] = await Promise.all([db.listSubmissions(), db.listFeedback(), db.listChats(), db.listContactMessages()]);
+  const [subs, fb, chats, contact, bookings] = await Promise.all([db.listSubmissions(), db.listFeedback(), db.listChats(), db.listContactMessages(), db.listBookings()]);
   const day = new Date().toISOString().slice(0, 10);
   if (req.params.fmt === "json") {
     res.setHeader("Content-Disposition", `attachment; filename="data-patrimonio-${day}.json"`);
-    return res.json({ submissions: subs.map(r => Object.fromEntries(SUBCOLS.map(c => [c, r[c] ?? null]))), feedback: fb, chats, contact_messages: contact });
+    return res.json({ submissions: subs.map(r => Object.fromEntries(SUBCOLS.map(c => [c, r[c] ?? null]))), feedback: fb, chats, contact_messages: contact, bookings });
   }
   if (req.params.fmt === "csv") {
     const which = ["feedback", "contact"].includes(req.query.table) ? req.query.table : "submissions";

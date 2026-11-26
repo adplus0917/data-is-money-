@@ -377,6 +377,40 @@ ALTER TABLE engagements ADD COLUMN IF NOT EXISTS selected_files jsonb;
 ALTER TABLE engagements ADD COLUMN IF NOT EXISTS partner_name text;
 ALTER TABLE engagements ADD COLUMN IF NOT EXISTS partner_email text;
 
+-- =====================================================================
+-- APPOINTMENT BOOKINGS (Nov 25 2026). A seller who finished the
+-- screening + valuation books a call: a day (ET business day) + a
+-- morning/afternoon window. The FULL screening profile rides along as
+-- jsonb so the team sees the whole company picture with the appointment.
+-- The Zoom handoff lives on the same row: zoom_status tracks the
+-- meeting state ('none' until staff trigger it, 'queued' when the
+-- one-click was pressed before the Zoom API credentials were wired,
+-- 'created' once server/zoom.js made the meeting on Miguel's account).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS bookings (
+  id              bigserial PRIMARY KEY,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  name            text NOT NULL,               -- from the price-gate lead
+  email           text NOT NULL,
+  phone           text,                        -- WhatsApp, optional
+  appt_date       date NOT NULL,               -- the chosen day (America/New_York)
+  window          text NOT NULL CHECK (window IN ('morning','afternoon')),
+  note            text,
+  lang            text,
+  folio           text,                        -- set if the seller later signs (same session)
+  profile         jsonb NOT NULL,              -- screening answers + server-computed estimate
+  status          text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','done')),
+  zoom_status     text NOT NULL DEFAULT 'none' CHECK (zoom_status IN ('none','queued','created','failed')),
+  zoom_meeting_id text,
+  zoom_join_url   text,
+  zoom_start_url  text,
+  zoom_invitees   text[] NOT NULL DEFAULT '{}',
+  zoom_created_at timestamptz,
+  zoom_note       text
+);
+CREATE INDEX IF NOT EXISTS bookings_created_idx ON bookings (created_at DESC);
+CREATE INDEX IF NOT EXISTS bookings_appt_idx ON bookings (appt_date, window);
+
 CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
 BEGIN
   PERFORM pg_advisory_xact_lock(727274);           -- one writer at a time keeps the chain linear
