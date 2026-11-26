@@ -43,6 +43,11 @@ const SIG_STYLES = [["great", "sig-style-great"], ["dancing", "sig-style-dancing
 const sigClass = id => (SIG_STYLES.find(x => x[0] === id) || SIG_STYLES[0])[1];
 let S = Object.assign({ step: 0, a: blank(), folio: null, token: null, samples: [] }, SS.get("dp.session", {}));
 S.lang = LS.get("dp.lang", (navigator.language || "").startsWith("es") ? "es" : "en");
+/* SEO (Nov 26 2026): a ?lang=es / ?lang=en URL wins over the stored
+   preference and persists like the EN/ES pill, so Spanish has a
+   crawlable URL (the hreflang pair in index.html points at it). */
+const urlLang = new URLSearchParams(location.search).get("lang");
+if (urlLang === "es" || urlLang === "en") { S.lang = urlLang; LS.set("dp.lang", urlLang); }
 /* single deal path (Nov 25 2026, Miguel's reversal of the two-option
    funnel): exclusive direct purchase ONLY — there is no license option.
    Any older saved session is normalized to the single track. */
@@ -294,6 +299,9 @@ function chatHTML() {
 function render() {
   const l = L();
   document.documentElement.lang = S.lang;
+  document.title = S.lang === "es" ? "\u00bfCu\u00e1nto valen los datos de tu empresa? | DATA Patrimonio" : "How Much Is Your Data Worth? Sell Your Business Data | DATA Patrimonio";
+  const metaDesc = document.querySelector('meta[name="description"]');
+  if (metaDesc) metaDesc.setAttribute("content", S.lang === "es" ? "\u00bfCu\u00e1nto valen tus datos? Valora gratis los datos hist\u00f3ricos de tu empresa en 2 minutos. Compramos una copia \u2014 t\u00fa conservas la tuya. Agenda un Zoom y abre tu expediente hoy." : "Data worth, how much? Get a free 2-minute valuation of your company's historical data. We buy a copy \u2014 you keep yours. Book a Zoom and start your file today.");
   document.querySelectorAll("[data-lang]").forEach(b => b.setAttribute("aria-pressed", b.dataset.lang === S.lang));
   $("tag").textContent = l.tag; $("heroT").textContent = l.heroT; $("heroP").textContent = l.heroP; $("ctaBtn").textContent = l.cta; $("trust").textContent = l.trust; $("foot").textContent = l.foot;
   const hChip = $("heroChip"); if (hChip) hChip.textContent = l.heroChip;
