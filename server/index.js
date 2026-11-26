@@ -75,6 +75,7 @@ app.get("/health", (req, res) => res.json({ ok: true, db: db.kind, engine: ENGIN
 const vault = require("./vault-routes")(app, { db, auth, limiter });
 const { audit } = require("../vault/lib/audit");
 const log = (entry) => (db.pool ? audit(db.pool, entry).catch(e => console.error("audit", e.message)) : Promise.resolve());
+require("./console-routes")(app, { db, limiter, log });
 app.get("/api/config", (req, res) => res.json({ vault: vault.enabled, maxSampleMb: storage.MAX_MB, maxDirectGb: Number(process.env.MAX_DIRECT_UPLOAD_GB || 5) }));
 
 /* ---------- public API (used by the seller funnel) ---------- */
