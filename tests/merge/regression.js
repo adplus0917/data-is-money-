@@ -162,6 +162,31 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   ok(/function focusIntoDialog/.test(app) && /addEventListener\("keydown"/.test(app) && /e\.key === "Escape"/.test(app) && /function restoreFocus/.test(app) && /function closeSig/.test(app), "modal focus management present: focus-in on open, Tab trap, Escape closes, focus restored to opener");
 }
 
+/* ---------- 8. Qualifier funnel → CRM → 2 PM Zoom (Nov 26 2026) ----------
+   Miguel walked a competitor's Facebook instant form (contact info →
+   industry → data-sharing authority → employees → years → position)
+   and ordered the same questionnaire on our funnel, feeding the CRM
+   calling list, with the funnel ending in ONE daily Zoom slot:
+   2:00 PM ET, Monday–Friday. Meta ad leads arrive through the
+   token-guarded intake into the same leads store. */
+{
+  const app = fs.readFileSync(path.join(ROOT, "public/app.js"), "utf8");
+  const i18n = fs.readFileSync(path.join(ROOT, "public/i18n.js"), "utf8");
+  const admin = fs.readFileSync(path.join(ROOT, "public/admin.js"), "utf8");
+  const srv = fs.readFileSync(path.join(ROOT, "server/index.js"), "utf8");
+  const cons = fs.readFileSync(path.join(ROOT, "server/console-routes.js"), "utf8");
+  ok(app.includes("/api/leads") && /data-gq/.test(app), "funnel gate posts a structured lead to /api/leads with the five qualifier answers");
+  ok(["industry", "authority", "empband", "yearsband", "position", "leadstatus", "leadsource"].every(k => i18n.includes(k + ":")), "qualifier option lists exist in i18n (industry/authority/empband/yearsband/position/leadstatus/leadsource)");
+  ok(/construction_trades/.test(i18n) && /meta_instant_form/.test(i18n), "qualifier codes + Meta source label present in i18n, EN+ES");
+  ok(/tabLeads/.test(i18n) && /tabLeads/.test(admin) && admin.includes("/api/admin/console/leads"), "team panel has a Leads tab wired to the console leads API");
+  ok(srv.includes('"/api/leads"') && srv.includes('"/api/intake/meta"') && /LEAD_INTAKE_TOKEN/.test(srv), "server registers /api/leads and the token-guarded /api/intake/meta");
+  ok(cons.includes('"/api/admin/console/leads"') && cons.includes("/claim"), "console routes expose the leads list, update and claim endpoints");
+  ok(opt.BOOKING_WINDOWS.length === 1 && opt.BOOKING_SLOT.time === "14:00" && opt.BOOKING_DAYS === 10, "server booking config: ONE daily slot, 2:00 PM ET, 10 business days");
+  const goodLead = { name: "A", company_name: "B SA", email: "a@b.com", industry: "legal", data_authority: "can_approve", employee_band: "under20", years_band: "y0to3", position: "ceo" };
+  ok(opt.checkLead({ name: "A", company_name: "B SA", email: "a@b.com" }).ok === false && opt.checkLead(goodLead).ok === true, "lead validator: qualifiers required at the gate, valid codes accepted");
+  ok(opt.checkLead({ full_name: "A", company: "B SA", email_address: "a@b.com" }, { requireQualifiers: false }).ok === true, "lead validator: Meta-shaped aliases accepted, qualifiers optional on intake");
+}
+
 /* ---------- engine integrity + worked example ---------- */
 {
   const { valueDataset } = require(path.join(ROOT, "server/engine.js"));
@@ -178,7 +203,7 @@ const MAN = [true, true, true, true, true];
 (async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dp-merge-reg-"));
   const child = spawn(process.execPath, [path.join(ROOT, "server/index.js")], {
-    env: { ...process.env, PORT: "3200", DATA_DIR: dataDir, DATABASE_URL: "", ADMIN_PASSWORD: "test-password-123", SESSION_SECRET: "test-secret-for-regression" },
+    env: { ...process.env, PORT: "3200", DATA_DIR: dataDir, DATABASE_URL: "", ADMIN_PASSWORD: "test-password-123", SESSION_SECRET: "test-secret-for-regression", LEAD_INTAKE_TOKEN: "test-intake-token" },
     stdio: "ignore",
   });
   try {
@@ -243,13 +268,13 @@ const MAN = [true, true, true, true, true];
     const csv = await (await fetch(W + "/api/admin/export.csv?table=contact", { headers: { Cookie: cookie } })).text();
     ok(/id,created_at,name,email,track,message/.test(csv) && csv.includes("compra_directa"), "HTTP: contact CSV export carries the track column and the single deal value");
 
-    /* appointment booking (Nov 25 2026; every-day + company name Nov 26 2026):
-       funnel ends by booking the Zoom call — a slot offered EVERY day */
+    /* appointment booking (Nov 25 2026; single 2 PM slot + company name
+       Nov 26 2026): funnel ends by booking the Zoom call — ONE daily
+       slot, 2:00 PM ET, Monday–Friday, next 10 business days */
     const days = opt.bookingDays();
-    const consecutive = days.every((d, i) => i === 0 || (new Date(d.date + "T12:00:00Z") - new Date(days[i - 1].date + "T12:00:00Z")) === 86400e3);
-    ok(days.length === 7 && consecutive && days.some(d => d.weekday === 0) && days.some(d => d.weekday === 6), "booking: exactly 7 consecutive ET calendar days are offered, weekend included (Zoom every day)");
+    ok(days.length === 10 && days.every(d => d.weekday >= 1 && d.weekday <= 5) && days.every((d, i) => i === 0 || d.date > days[i - 1].date), "booking: exactly 10 ET business days (Mon–Fri) are offered for the single 2:00 PM slot");
     r = await j(W + "/api/bookings/days");
-    ok(r.s === 200 && Array.isArray(r.b.days) && r.b.days.length === 7 && r.b.tz === "America/New_York", "HTTP: offered-days endpoint matches the server validator");
+    ok(r.s === 200 && Array.isArray(r.b.days) && r.b.days.length === 10 && r.b.tz === "America/New_York" && r.b.slot && r.b.slot.time === "14:00" && r.b.slot.meeting_type === "zoom" && Array.isArray(r.b.windows) && r.b.windows.length === 1 && r.b.windows[0] === "afternoon", "HTTP: offered-days endpoint shows Mon–Fri days + the single 2:00 PM ET Zoom slot");
     const bpost = body => j(W + "/api/bookings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.jet", date: days[0].date, window: "morning", answers });
     ok(r.s === 400 && r.b.error_code === "email_tld", "HTTP: booking rejects a .jet email with the shared validator (got " + r.s + ")");
@@ -259,11 +284,14 @@ const MAN = [true, true, true, true, true];
     ok(r.s === 400, "HTTP: booking rejects a day that is not in the offered list (got " + r.s + ")");
     r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", date: days[0].date, window: "evening", answers });
     ok(r.s === 400, "HTTP: booking rejects an unknown time window (got " + r.s + ")");
-    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", phone: "+1 813 555 0100", date: days[0].date, window: "afternoon", note: "Llamar después de las 2", answers, lang: "es" });
-    ok(r.s === 201 && r.b.id && r.b.date === days[0].date && r.b.window === "afternoon" && r.b.meeting_type === "zoom", "HTTP: booking created with an offered day + window, typed as a Zoom meeting (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", date: days[0].date, window: "morning", answers });
+    ok(r.s === 400 && /2:00 PM/.test(r.b.error || ""), "HTTP: booking rejects the retired morning window — the only slot is 2:00 PM ET (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", phone: "+1 813 555 0100", date: days[0].date, window: "afternoon", note: "Llamar después de las 2", answers, qualifiers: { industry: "construction_trades", data_authority: "can_approve", employee_band: "20to50", years_band: "y7to10", position: "owner" }, lang: "es" });
+    ok(r.s === 201 && r.b.id && r.b.date === days[0].date && r.b.window === "afternoon" && r.b.slot_time === "14:00" && r.b.meeting_type === "zoom", "HTTP: booking created on an offered business day at the single 2:00 PM ET Zoom slot (got " + r.s + ")");
     const bkId = r.b.id;
     const bkRow = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).bookings.find(x => x.id === bkId);
     ok(bkRow && bkRow.company_name === "Empresa Ana SA", "booking is stored WITH the company name from the lead");
+    ok(bkRow && bkRow.industry === "construction_trades" && bkRow.data_authority === "can_approve" && bkRow.employee_band === "20to50" && bkRow.years_band === "y7to10" && bkRow.position === "owner", "booking is stored WITH the five qualifier answers from the gate");
     ok(bkRow && bkRow.status === "pending" && bkRow.profile && bkRow.profile.sector === "roof" && bkRow.profile.estimate_low > 0 && bkRow.profile.track === "compra_directa", "booking is stored with the FULL screening profile + server-computed estimate");
     ok(bkRow && Array.isArray(bkRow.zoom_invitees) && bkRow.zoom_invitees.includes("gconcepcion@cpointehomes.com") && bkRow.zoom_invitees.includes("tkruse@cpointehomes.com") && bkRow.zoom_invitees.includes("migueladplus@gmail.com") && bkRow.zoom_status === "none", "booking carries the Zoom invitee list (Gil, Tyler, Miguel); no meeting exists yet");
     r = await post({ answers, contact: { company_name: "X SA", owner_name: "Ana Paz", email: "ana@empresa.com", signature_name: "Ana Paz" }, manifest: MAN, booking_id: bkId });
@@ -277,7 +305,48 @@ const MAN = [true, true, true, true, true];
     r = await j(W + "/api/admin/bookings/" + bkId + "/zoom", { method: "POST", headers: { Cookie: cookie } });
     ok(r.s === 200 && r.b.queued === true && r.b.configured === false && r.b.booking.zoom_status === "queued" && !r.b.booking.zoom_join_url, "HTTP: Create Zoom with no credentials QUEUES the intent and fakes NO meeting link");
     const zoomMod = require(path.join(ROOT, "server/zoom.js"));
-    ok(zoomMod.configured() === false && zoomMod.meetingPayload({ name: "Ana", email: "ana@empresa.com", appt_date: days[0].date, window: "morning", profile: {} }).settings.auto_recording === "cloud", "zoom module: unconfigured in this env; the create payload always sets cloud auto-recording");
+    const zoomPayload = zoomMod.meetingPayload({ name: "Ana", email: "ana@empresa.com", appt_date: days[0].date, window: "afternoon", profile: {} });
+    ok(zoomMod.configured() === false && zoomPayload.settings.auto_recording === "cloud" && zoomPayload.start_time === days[0].date + "T14:00:00", "zoom module: unconfigured in this env; the payload starts the single slot at 2:00 PM ET with cloud auto-recording");
+
+    /* qualifier leads → CRM calling list + Meta intake (Nov 26 2026) */
+    const QUAL = { industry: "construction_trades", data_authority: "can_approve", employee_band: "20to50", years_band: "y7to10", position: "owner" };
+    const lpost = body => j(W + "/api/leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    r = await lpost({ name: "Lead Ana", company_name: "Lead Co SA", email: "lead@empresa.com", phone: "+1 813 555 0111", qualifiers: QUAL, track: "compra_directa", lang: "en", message: "Valuation lead — test" });
+    ok(r.s === 201 && r.b.id, "HTTP: gate lead WITH all five qualifiers is accepted (got " + r.s + ")");
+    const leadId = r.b.id;
+    r = await lpost({ name: "Lead Ana", company_name: "Lead Co SA", email: "lead@empresa.com", qualifiers: { industry: "legal" } });
+    ok(r.s === 400, "HTTP: gate lead missing qualifier answers is rejected (got " + r.s + ")");
+    r = await lpost({ name: "Lead Ana", email: "lead@empresa.com", qualifiers: QUAL });
+    ok(r.s === 400 && /company name is required/.test(r.b.error || ""), "HTTP: gate lead without a company name is rejected (got " + r.s + ")");
+    r = await lpost({ name: "Lead Ana", company_name: "Lead Co SA", email: "lead@empresa.jet", qualifiers: QUAL });
+    ok(r.s === 400 && r.b.error_code === "email_tld", "HTTP: gate lead rejects a .jet email with the shared validator (got " + r.s + ")");
+    const leadRow = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).leads.find(x => x.id === leadId);
+    ok(leadRow && leadRow.source === "site_gate" && leadRow.status === "new" && leadRow.assigned_to === null && leadRow.industry === "construction_trades" && leadRow.data_authority === "can_approve" && leadRow.employee_band === "20to50" && leadRow.years_band === "y7to10" && leadRow.position === "owner", "lead is stored with source, status new, Unassigned, and ALL five qualifier answers");
+    r = await A("/api/admin/console/leads");
+    ok(Array.isArray(r.b) && r.b.some(x => x.id === leadId), "HTTP: the lead appears in the staff-console CRM calling list");
+    r = await j(W + "/api/admin/console/leads/" + leadId, { method: "PATCH", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ status: "called" }) });
+    ok(r.s === 200 && r.b.status === "called", "HTTP: a caller can update the lead status (new → called)");
+    r = await j(W + "/api/admin/console/leads/" + leadId, { method: "PATCH", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ assigned_to: "nobody@example.com" }) });
+    ok(r.s === 400, "HTTP: assigning to a non-staff email is rejected (got " + r.s + ")");
+    r = await j(W + "/api/admin/console/leads/" + leadId + "/claim", { method: "POST", headers: { Cookie: cookie } });
+    ok(r.s === 400, "HTTP: claim from the shared-password login is refused — claiming needs a staff account (got " + r.s + ")");
+    r = await bpost({ name: "Lead Ana", company_name: "Lead Co SA", email: "lead@empresa.com", date: days[1].date, window: "afternoon", answers, qualifiers: QUAL });
+    ok(r.s === 201, "HTTP: the lead's owner books the 2 PM Zoom (got " + r.s + ")");
+    const flipBkId = r.b.id;
+    const leadAfter = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).leads.find(x => x.id === leadId);
+    ok(leadAfter && leadAfter.status === "booked" && leadAfter.booking_id === flipBkId, "booking flips the matching lead to status booked, linked to the appointment");
+    /* Meta instant-form intake: token-guarded, same leads store */
+    const metaBody = { full_name: "Meta Lead", company: "Meta Co", email_address: "meta@empresa.com", phone_number: "+1 813 555 0122", industry: "accounting", data_authority: "partner_signoff", employee_band: "under20", years_band: "y4to6", position: "founder" };
+    r = await j(W + "/api/intake/meta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(metaBody) });
+    ok(r.s === 401, "HTTP: Meta intake without the token is refused (got " + r.s + ")");
+    r = await j(W + "/api/intake/meta", { method: "POST", headers: { "Content-Type": "application/json", "X-Intake-Token": "test-intake-token" }, body: JSON.stringify(metaBody) });
+    ok(r.s === 201 && r.b.id, "HTTP: Meta intake WITH the token stores the lead (got " + r.s + ")");
+    const metaRow = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).leads.find(x => x.id === r.b.id);
+    ok(metaRow && metaRow.source === "meta_instant_form" && metaRow.name === "Meta Lead" && metaRow.company_name === "Meta Co" && metaRow.industry === "accounting" && metaRow.position === "founder", "Meta lead is stored source-tagged with normalized fields + qualifiers");
+    r = await j(W + "/api/intake/meta?hub.mode=subscribe&hub.verify_token=test-intake-token&hub.challenge=CH123");
+    ok(r.s === 200 && r.b === "CH123", "HTTP: Meta webhook verification echoes the challenge for the right token");
+    r = await j(W + "/api/intake/meta?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=CH123");
+    ok(r.s === 403, "HTTP: Meta webhook verification rejects a wrong token");
   } finally {
     child.kill("SIGTERM");
     fs.rmSync(dataDir, { recursive: true, force: true });

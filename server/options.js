@@ -14,6 +14,63 @@ const TRACKS = ["compra_directa"];   // single deal path (Nov 25 2026): exclusiv
 const STATUSES = ["Nuevo","Contactado","Papel enviado","Firmado","Muestra recibida","Verificado","Pagado","En el vault"];
 const MANIFEST_ITEMS = 5;
 
+/* ---------------------------------------------------------------------------
+   QUALIFIER QUESTIONNAIRE (Nov 26 2026, Miguel's direct order — "just get
+   it done now"): mirrors the competitor intake Miguel walked on Facebook
+   (profession reel → tap → qualifier form → CRM → Zoom). The five answers
+   ride on the funnel lead (price gate) and on the booking, and land in the
+   leads table so the calling team (Panama; Gil/Tyler sales-lane admins)
+   can work them. Codes are stored; EN/ES labels live in public/i18n.js.
+   --------------------------------------------------------------------------- */
+const INDUSTRIES = ["construction_trades","accounting","legal","realestate","tech_software","finance_banking","insurance","professional_services","marketing_media","healthcare","manufacturing","other"];
+const AUTHORITY = ["can_approve","partner_signoff"];       // "Can you approve data-sharing decisions for your company?"
+const EMPLOYEE_BANDS = ["under20","20to50","51to150","151to500","over500"];
+const YEARS_BANDS = ["y0to3","y4to6","y7to10","y11to14","y15plus"];
+const POSITIONS = ["founder","owner","president","ceo","board","csuite","other"];
+const LEAD_STATUSES = ["new","called","booked","not_interested"];
+const LEAD_SOURCES = ["site_gate","meta_instant_form","manual"];
+
+// Returns { ok:true, qualifiers } or { ok:false, error }.
+// required=true (the site gate): all five must be answered with valid codes.
+// required=false (Meta instant-form intake): valid codes are kept, anything
+// missing or unknown becomes null — an ad lead is never dropped over a
+// qualifier, but a made-up value is never stored either.
+function checkQualifiers(q, required = true) {
+  q = q && typeof q === "object" ? q : {};
+  const pick = (k, list) => (list.includes(q[k]) ? q[k] : null);
+  const out = {
+    industry: pick("industry", INDUSTRIES),
+    data_authority: pick("data_authority", AUTHORITY),
+    employee_band: pick("employee_band", EMPLOYEE_BANDS),
+    years_band: pick("years_band", YEARS_BANDS),
+    position: pick("position", POSITIONS),
+  };
+  if (required) {
+    const missing = Object.entries(out).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) return { ok: false, error: "invalid or missing qualifier: " + missing.join(", ") };
+  }
+  return { ok: true, qualifiers: out };
+}
+
+// The funnel lead (price gate) and the Meta instant-form intake share this
+// shape. Returns { ok:true, lead } or { ok:false, error, error_code? }.
+function checkLead(b, { requireQualifiers = true } = {}) {
+  if (!b || typeof b !== "object") return { ok: false, error: "missing lead" };
+  const name = str(b.name || b.full_name);
+  const company_name = str(b.company_name || b.company);
+  const email = str(b.email || b.email_address, 200);
+  const phone = str(b.phone || b.phone_number, 40);
+  const website = str(b.website, 300);
+  if (!name) return { ok: false, error: "name is required" };
+  if (!company_name) return { ok: false, error: "company name is required" };
+  const err = emailError(email);
+  if (err === "tld") return { ok: false, error_code: "email_tld", error: "That email ending is not a real domain — for example, .jet is not valid. Did you mean .com? Check the ending (.com, .net, .org…)" };
+  if (err) return { ok: false, error_code: "email_format", error: "That email is not in a valid format. It should look like name@company.com, with no spaces." };
+  const q = checkQualifiers(b.qualifiers && typeof b.qualifiers === "object" ? b.qualifiers : b, requireQualifiers);
+  if (!q.ok) return { ok: false, error: q.error };
+  return { ok: true, lead: { name, company_name, email, phone: phone || null, website: website || null, ...q.qualifiers } };
+}
+
 const str = (v, max = 160) => typeof v === "string" ? v.trim().slice(0, max) : "";
 
 // ---------------------------------------------------------------------------
@@ -101,23 +158,24 @@ const toEngineInput = a => ({ revenueBand: a.revenue_band, recordYears: a.record
 /* ---------------------------------------------------------------------------
    APPOINTMENT BOOKING (Nov 25 2026, Miguel's direction): campaign ads land
    on the screening funnel; after the valuation the seller books a call.
-   Slots are whole-day picks + a time window, in America/New_York.
-   EVERY-DAY AVAILABILITY (Nov 26 2026, Miguel's direction — "we want to
-   put a Zoom meeting every day"): the offered list is the next
-   BOOKING_DAYS calendar days starting tomorrow ET, ALL seven weekdays
-   (weekends included). Config points: BOOKING_DAYS (how many days are
-   offered, default 7, env-overridable) and BOOKING_EVERY_DAY (default
-   true; set env BOOKING_EVERY_DAY=false to fall back to Mon–Fri only).
-   The windows span 9 AM–5 PM ET (morning 9–12, afternoon 1–5; the Zoom
-   start times per window are BOOKING_WINDOW_START below).
+   SINGLE-SLOT AVAILABILITY (Nov 26 2026, Miguel's decision — supersedes
+   the same-day every-day/two-window setup): ONE daily Zoom slot, 2:00 PM
+   America/New_York, Monday–Friday only, 30 minutes. The offered list is
+   the next BOOKING_DAYS business days starting tomorrow ET (default 10).
+   The slot keeps the internal window code "afternoon" — its Zoom start
+   (BOOKING_WINDOW_START.afternoon = 14:00:00 ET) and the bookings table
+   CHECK constraint already use it, so the stored shape is unchanged.
+   BOOKING_EVERY_DAY=true is an env escape hatch (NOT set in render.yaml)
+   that would offer weekends again.
    The client renders the same list with the same algorithm (public/app.js
    bookingDaysClient); the server re-derives it here and rejects anything
    else, so a tampered browser can't book a date three months out.
    --------------------------------------------------------------------------- */
-const BOOKING_WINDOWS = ["morning", "afternoon"];
+const BOOKING_WINDOWS = ["afternoon"];
+const BOOKING_SLOT = { window: "afternoon", time: "14:00", label: "2:00 PM", tz: "America/New_York", duration_min: 30, meeting_type: "zoom" };
 const BOOKING_STATUSES = ["pending", "confirmed", "done"];
-const BOOKING_DAYS = Math.max(1, Math.min(14, parseInt(process.env.BOOKING_DAYS || "7", 10) || 7));
-const BOOKING_EVERY_DAY = process.env.BOOKING_EVERY_DAY !== "false";
+const BOOKING_DAYS = Math.max(1, Math.min(14, parseInt(process.env.BOOKING_DAYS || "10", 10) || 10));
+const BOOKING_EVERY_DAY = process.env.BOOKING_EVERY_DAY === "true";
 const BOOKING_TZ = "America/New_York";
 // The Zoom meeting for a booking is on Miguel's account; these are the
 // people who get the invite (Miguel's direction, Nov 25 2026).
@@ -133,8 +191,8 @@ function etParts(d = new Date()) {
 }
 const ymd = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 // The offered appointment days: [{ date: "YYYY-MM-DD", weekday: 0..6 (Sun..Sat) }].
-// Every-day mode (default): the next BOOKING_DAYS calendar days, weekends
-// included. Fallback mode (BOOKING_EVERY_DAY=false): Mon–Fri only.
+// Default mode: Mon–Fri business days only (the Nov 26 single-slot rule).
+// Escape-hatch mode (BOOKING_EVERY_DAY=true): every consecutive day.
 function bookingDays(now = new Date()) {
   const t = etParts(now);
   const out = [];
@@ -167,10 +225,20 @@ function checkBooking(b, now = new Date()) {
   if (err) return { ok: false, error_code: "email_format", error: "That email is not in a valid format. It should look like name@company.com, with no spaces." };
   const date = str(b.date, 10);
   if (!bookingDays(now).some(x => x.date === date)) return { ok: false, error: "choose one of the offered appointment days" };
-  if (!BOOKING_WINDOWS.includes(b.window)) return { ok: false, error: "choose a morning or afternoon window" };
+  if (!BOOKING_WINDOWS.includes(b.window)) return { ok: false, error: "the only slot is the daily 2:00 PM ET Zoom call" };
   const a = checkAnswers(b.answers);
   if (!a.ok) return { ok: false, error: a.error };
-  return { ok: true, booking: { name, company_name, email, phone: phone || null, note: note || null, appt_date: date, window: b.window, answers: a.answers } };
+  // Qualifiers ride along when the funnel sends them (they were answered at
+  // the price gate). Optional here — the lead row is the canonical store —
+  // but when present they must be valid codes, and they are stored on the
+  // booking too so the appointments view shows them.
+  const hasQ = b.qualifiers && typeof b.qualifiers === "object" ? Object.keys(b.qualifiers).length > 0 : ["industry","data_authority","employee_band","years_band","position"].some(k => b[k] !== undefined);
+  let qualifiers = null;
+  if (hasQ) {
+    const q = checkQualifiers(b.qualifiers && typeof b.qualifiers === "object" ? b.qualifiers : b, false);
+    qualifiers = q.qualifiers;
+  }
+  return { ok: true, booking: { name, company_name, email, phone: phone || null, note: note || null, appt_date: date, window: b.window, answers: a.answers, qualifiers } };
 }
 
-module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail, BOOKING_WINDOWS, BOOKING_STATUSES, BOOKING_DAYS, BOOKING_EVERY_DAY, BOOKING_TZ, BOOKING_WINDOW_START, ZOOM_INVITEES, etParts, bookingDays, checkBooking };
+module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail, INDUSTRIES, AUTHORITY, EMPLOYEE_BANDS, YEARS_BANDS, POSITIONS, LEAD_STATUSES, LEAD_SOURCES, checkQualifiers, checkLead, BOOKING_WINDOWS, BOOKING_SLOT, BOOKING_STATUSES, BOOKING_DAYS, BOOKING_EVERY_DAY, BOOKING_TZ, BOOKING_WINDOW_START, ZOOM_INVITEES, etParts, bookingDays, checkBooking };

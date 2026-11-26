@@ -144,6 +144,56 @@ module.exports = function mount(app, { db, limiter, log }) {
     });
   });
 
+  /* ================= funnel leads (CRM calling list, Nov 26 2026) =================
+     The qualifier leads from the site gate + Meta instant-form intake.
+     Callers (Panama team; Gil/Tyler sales-lane admins) work this list:
+     status is caller-updatable (new / called / booked / not_interested),
+     assigned_to holds a staff email, and NULL means the Unassigned queue
+     any signed-in caller can claim from. Assignment targets must be real
+     staff accounts (created later for the Panama team — none are created
+     by this code). Role rules unchanged: any team identity may read and
+     work leads (staff.guard); staff management stays admin-only. */
+  app.get("/api/admin/console/leads", staff.guard, async (req, res) => {
+    const f = {};
+    if (req.query.status) {
+      if (!opt.LEAD_STATUSES.includes(req.query.status)) return res.status(400).json({ error: "unknown lead status" });
+      f.status = req.query.status;
+    }
+    if (req.query.assigned === "unassigned") f.unassigned = true;
+    else if (req.query.assigned) f.assigned_to = String(req.query.assigned).toLowerCase();
+    res.json(await db.listLeads(f));
+  });
+
+  app.patch("/api/admin/console/leads/:id", staff.guard, async (req, res) => {
+    const b = req.body || {};
+    const p = {};
+    if (b.status !== undefined) {
+      if (!opt.LEAD_STATUSES.includes(b.status)) return res.status(400).json({ error: "status must be one of: " + opt.LEAD_STATUSES.join(", ") });
+      p.status = b.status;
+    }
+    if (b.assigned_to !== undefined) {
+      const em = b.assigned_to ? String(b.assigned_to).toLowerCase().trim() : null;
+      if (em && !(await db.getStaffByEmail(em))) return res.status(400).json({ error: "assigned_to must be a staff account email (or null for Unassigned)" });
+      p.assigned_to = em;
+    }
+    if (!Object.keys(p).length) return res.status(400).json({ error: "nothing to update" });
+    p.updated_by = staff.actorOf(req);
+    const row = await db.updateLead(Number(req.params.id), p);
+    if (!row) return res.status(404).json({ error: "lead not found" });
+    audit({ actor: staff.actorOf(req), action: "lead.updated", detail: { lead: row.id, status: row.status, assigned_to: row.assigned_to } });
+    res.json(row);
+  });
+
+  // Claim a lead from the Unassigned queue: needs a real staff account
+  // (the shared-password login has no email to assign to).
+  app.post("/api/admin/console/leads/:id/claim", staff.guard, async (req, res) => {
+    if (!req.staff || !req.staff.email) return res.status(400).json({ error: "claiming needs a staff account sign-in (the shared admin login has no email to assign to)" });
+    const row = await db.updateLead(Number(req.params.id), { assigned_to: req.staff.email, updated_by: staff.actorOf(req) });
+    if (!row) return res.status(404).json({ error: "lead not found" });
+    audit({ actor: staff.actorOf(req), action: "lead.claimed", detail: { lead: row.id, assigned_to: row.assigned_to } });
+    res.json(row);
+  });
+
   /* ================= per-file record ================= */
   app.get("/api/admin/console/files/:folio", staff.guard, async (req, res) => {
     const folio = String(req.params.folio);

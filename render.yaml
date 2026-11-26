@@ -29,6 +29,8 @@ services:
         sync: false
       - key: OUTBOX_FROM
         value: hola@dataismoney.ai
+      - key: LEAD_INTAKE_TOKEN
+        sync: false          # token for the Meta instant-form lead intake (POST /api/intake/meta); set by hand in the Render dashboard, never in the repo
 databases:
   - name: data-patrimonio-db
     plan: basic-256mb

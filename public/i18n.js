@@ -14,12 +14,20 @@ const O={
  tier:[["Bronce","Bronze","Bronce"],["Plata","Silver","Plata"],["Oro","Gold","Oro"],["Platino","Platinum","Platino"]],
  status:[["Nuevo","New","Nuevo"],["Contactado","Contacted","Contactado"],["Papel enviado","Paper sent","Papel enviado"],["Firmado","Signed","Firmado"],["Muestra recibida","Sample received","Muestra recibida"],["Verificado","Verified","Verificado"],["Pagado","Paid","Pagado"],["En el vault","In the vault","En el vault"]],
  bkstatus:[["pending","Pending","Pendiente"],["confirmed","Confirmed","Confirmada"],["done","Done","Completada"]],
- bkzoom:[["none","Not created","Sin crear"],["queued","Queued","En cola"],["created","Created","Creado"],["failed","Failed","Falló"]]
+ bkzoom:[["none","Not created","Sin crear"],["queued","Queued","En cola"],["created","Created","Creado"],["failed","Failed","Falló"]],
+ /* qualifier questionnaire (Nov 26 2026) — codes match server/options.js */
+ industry:[["construction_trades","Construction & Trades","Construcción y oficios"],["accounting","Accounting","Contabilidad"],["legal","Legal","Legal"],["realestate","Real Estate","Bienes raíces"],["tech_software","Technology & Software","Tecnología y software"],["finance_banking","Finance & Banking","Finanzas y banca"],["insurance","Insurance","Seguros"],["professional_services","Professional Services","Servicios profesionales"],["marketing_media","Marketing / Advertising / Media","Marketing / Publicidad / Medios"],["healthcare","Healthcare","Salud"],["manufacturing","Manufacturing","Manufactura"],["other","Other","Otro"]],
+ authority:[["can_approve","I can approve","Yo puedo aprobar"],["partner_signoff","Need partner sign-off","Necesito la aprobación de un socio"]],
+ empband:[["under20","Under 20","Menos de 20"],["20to50","20–50","20–50"],["51to150","51–150","51–150"],["151to500","151–500","151–500"],["over500","500+","500+"]],
+ yearsband:[["y0to3","0–3 years","0–3 años"],["y4to6","4–6 years","4–6 años"],["y7to10","7–10 years","7–10 años"],["y11to14","11–14 years","11–14 años"],["y15plus","15+ years","15+ años"]],
+ position:[["founder","Founder","Fundador"],["owner","Owner","Dueño"],["president","President","Presidente"],["ceo","CEO","CEO"],["board","Board Member","Miembro de la junta"],["csuite","C-Suite","Directivo (C-Suite)"],["other","Other","Otro"]],
+ leadstatus:[["new","New","Nuevo"],["called","Called","Llamado"],["booked","Booked","Reservado"],["not_interested","Not interested","No interesado"]],
+ leadsource:[["site_gate","Website","Sitio web"],["meta_instant_form","Meta ad form","Formulario de anuncio Meta"],["manual","Manual","Manual"]]
 };
 const T={
 en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI companies need the real-world experience of companies like yours. Your invoices, quotes, contracts and emails from years of work are worth money. Find out how much in 2 minutes.",cta:"Value my data →",trust:"No commitment. Your information stays private and secure.",soundOff:"Listen to music",soundOn:"Music on",heroChip:"Years of work, turned into value",
  steps:["Your company","Your data","Size & format","Your valuation","Book your appointment","Agreement & signature","Done"],stepOf:(i,n)=>`Step ${i} of ${n}`,
- subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Pick a day and a time window for your Zoom call — we go over your valuation together.","Two pages. No hidden fine print.","You're in."],
+ subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Pick a weekday for your Zoom call — one daily slot at 2:00 PM ET, and we go over your valuation together.","Two pages. No hidden fine print.","You're in."],
  back:"Back",next:"Continue",see:"See my valuation",toContract:"Continue to agreement",submit:"Sign and submit",
  qSector:"Sector",gT:"Construction & trades",gO:"Every other industry",qBiz:"Years in business",qEmp:"Employees",qRec:"Years of records",qTypes:"Record types (choose all you have)",qVol:"Approximate number of records",
  qRev:"Annual revenue",qFmt:"Data format",qFreq:"Does the data keep growing?",qTrack:"How we buy your data",
@@ -60,7 +68,7 @@ en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI c
  valNote:"Constants were not changed to force a pass, as the kit instructs. Profile A has no record types named, so it is run with the 3 lowest-weight types and with 3 including email and accounting. Profile D asks for $20–50M revenue; the engine has one band for everything over $20M.",backFunnel:"Back to the seller funnel",stepWord:"Step",resultWord:"Done screen"},
 es:{tag:"Tus datos son patrimonio",heroT:"Tus datos son patrimonio.",heroP:"Las empresas de AI necesitan la experiencia real de empresas como la tuya. Tus facturas, cotizaciones, contratos y correos de años de trabajo valen dinero. Descubre cuánto en 2 minutos.",cta:"Valorar mis datos →",trust:"Sin compromiso. Tu información se mantiene privada y segura.",soundOff:"Escuchar música",soundOn:"Música activada",heroChip:"Años de trabajo, convertidos en valor",
  steps:["Tu empresa","Tus datos","Tamaño y formato","Tu valoración","Reserva tu cita","Contrato y firma","Listo"],stepOf:(i,n)=>`Paso ${i} de ${n}`,
- subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Elige un día y un horario para tu llamada por Zoom — hablamos de tu valoración juntos.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
+ subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Elige un día entre semana para tu llamada por Zoom — un solo horario diario a las 2:00 PM ET, y hablamos de tu valoración juntos.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
  back:"Atrás",next:"Continuar",see:"Ver mi valoración",toContract:"Continuar al contrato",submit:"Firmar y enviar",
  qSector:"Sector",gT:"Construcción y oficios",gO:"Todas las demás industrias",qBiz:"Años en el negocio",qEmp:"Empleados",qRec:"Años de registros",qTypes:"Tipos de registro (elige todos los que tengas)",qVol:"Volumen aproximado de registros",
  qRev:"Ingresos anuales",qFmt:"Formato de los datos",qFreq:"¿Los datos siguen creciendo?",qTrack:"Cómo compramos tus datos",
@@ -162,18 +170,24 @@ Object.assign(T.es,{
  tabChats:"Chats",tabContact:"Mensajes",chatCols:["Sesión","Fecha","Idioma","Conversación"],contactCols:["Fecha","Nombre","Correo","Modalidad","Mensaje"],chatEmpty:"Sin chats todavía.",contactEmpty:"Sin mensajes por email todavía.",generalWord:"General"
 });
 
-/* price gate (Nov 25 2026, Miguel's direction): nobody sees the valuation
-   until they leave name + email; the lead is saved through /api/contact
-   into the same contact_messages the team panel already shows. */
+/* price gate (Nov 25 2026, Miguel's direction; qualifier questionnaire
+   Nov 26 2026): nobody sees the valuation until they leave name + email
+   + company name AND answer the five qualifier questions; the lead is
+   saved through /api/leads into the CRM leads table (and mirrored into
+   the contact_messages the team panel already shows). */
 Object.assign(T.en,{
- gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name, your company and your email — we'll send you the next steps there too.",
+ gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name, your company and your email, and answer five quick questions — we'll send you the next steps there too.",
  gateName:"Your name",gateCompany:"Company name",gateWa:"WhatsApp (optional)",gateBtn:"See my valuation →",gateNote:"No spam and no commitment. Your information stays private and secure.",
- gateErrName:"Please tell us your name.",gateErrCompany:"Please tell us your company name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)"
+ gateErrName:"Please tell us your name.",gateErrCompany:"Please tell us your company name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)",
+ qIndustry:"What industry is your company in?",qAuthority:"Can you approve data-sharing decisions for your company?",qEmpBand:"How many employees?",qYearsBand:"How many years in operation?",qPosition:"What is your position?",
+ gateErrQual:"Please answer all five questions so our team can prepare for your call."
 });
 Object.assign(T.es,{
- gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre, tu empresa y tu correo — ahí te enviamos también los siguientes pasos.",
+ gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre, tu empresa y tu correo, y responde cinco preguntas rápidas — ahí te enviamos también los siguientes pasos.",
  gateName:"Tu nombre",gateCompany:"Nombre de la empresa",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
- gateErrName:"Por favor, dinos tu nombre.",gateErrCompany:"Por favor, dinos el nombre de tu empresa.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)"
+ gateErrName:"Por favor, dinos tu nombre.",gateErrCompany:"Por favor, dinos el nombre de tu empresa.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)",
+ qIndustry:"¿En qué industria está tu empresa?",qAuthority:"¿Puedes aprobar las decisiones de compartir datos de tu empresa?",qEmpBand:"¿Cuántos empleados?",qYearsBand:"¿Cuántos años lleva operando?",qPosition:"¿Cuál es tu puesto?",
+ gateErrQual:"Por favor responde las cinco preguntas para que nuestro equipo se prepare para tu llamada."
 });
 
 /* appointment booking (Nov 25 2026, Miguel's direction): the step right
@@ -183,26 +197,28 @@ Object.assign(T.es,{
    NEVER shown here — it follows by email once the team creates the
    meeting from the panel (no fake links). */
 Object.assign(T.en,{
- bkNext:"Book your appointment →",bkContactL:"We'll contact you at:",bkDayL:"Choose a day",bkWinL:"Choose a time window",
- bkZoomNote:"This appointment is a Zoom video call with our team — pick any day, we meet every day. Your join link will be emailed to you before the appointment.",
- bkMorning:"Morning",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Afternoon",bkAfternoonH:"1:00 – 5:00 PM ET",
+ bkNext:"Book your appointment →",bkContactL:"We'll contact you at:",bkDayL:"Choose a day",bkWinL:"Your Zoom time",
+ bkZoomNote:"This appointment is a Zoom video call with our team — one daily slot: 2:00 PM ET, Monday to Friday (30 minutes). Your join link will be emailed to you before the appointment.",
+ bkMorning:"Morning",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Zoom call",bkAfternoonH:"2:00 PM ET · 30 min",
  bkNoteL:"Anything we should know? (optional)",bkNotePh:"For example: the best number to reach you, or what you'd like to cover on the call…",
- bkConfirm:"Confirm my appointment",bkSkip:"Continue without an appointment",bkErrPick:"Choose a day and a time window first.",
+ bkConfirm:"Confirm my appointment",bkSkip:"Continue without an appointment",bkErrPick:"Choose a day first.",
  bkDoneT:"Your appointment is booked!",bkFor:"Your Zoom call:",
  bkDoneP:"Your appointment is a Zoom video call. We'll contact you to confirm it, and your Zoom join link will arrive by email once your appointment is confirmed.",
  bkContinue:"Continue to the agreement",
  tabBookings:"Appointments",bkCols:["Booked","Appointment","Name","Email","WhatsApp","Company profile","Estimate","Status","Zoom","Note"],bkEmpty:"No appointments yet. Bookings appear here the moment a seller reserves a slot.",
- bkZoomBtn:"Create Zoom",bkZoomFor:"Invitees: Gil, Tyler, Miguel"
+ bkZoomBtn:"Create Zoom",bkZoomFor:"Invitees: Gil, Tyler, Miguel",
+ tabLeads:"Leads",leadCols:["Received","Name","Company","WhatsApp / Phone","Email","Industry","Can approve?","Employees","Years","Position","Source","Assigned to","Status"],leadEmpty:"No leads yet. Funnel and ad-form leads appear here the moment they come in.",leadUnassigned:"Unassigned"
 });
 Object.assign(T.es,{
- bkNext:"Reserva tu cita →",bkContactL:"Te contactamos en:",bkDayL:"Elige un día",bkWinL:"Elige un horario",
- bkZoomNote:"Esta cita es una videollamada por Zoom con nuestro equipo — elige cualquier día, nos reunimos todos los días. El enlace para unirte te llega por correo antes de la cita.",
- bkMorning:"Mañana",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Tarde",bkAfternoonH:"1:00 – 5:00 PM ET",
+ bkNext:"Reserva tu cita →",bkContactL:"Te contactamos en:",bkDayL:"Elige un día",bkWinL:"Tu hora de Zoom",
+ bkZoomNote:"Esta cita es una videollamada por Zoom con nuestro equipo — un solo horario diario: 2:00 PM ET, de lunes a viernes (30 minutos). El enlace para unirte te llega por correo antes de la cita.",
+ bkMorning:"Mañana",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Llamada por Zoom",bkAfternoonH:"2:00 PM ET · 30 min",
  bkNoteL:"¿Algo que debamos saber? (opcional)",bkNotePh:"Por ejemplo: el mejor número para llamarte, o qué quieres cubrir en la llamada…",
- bkConfirm:"Confirmar mi cita",bkSkip:"Continuar sin cita",bkErrPick:"Primero elige un día y un horario.",
+ bkConfirm:"Confirmar mi cita",bkSkip:"Continuar sin cita",bkErrPick:"Primero elige un día.",
  bkDoneT:"¡Tu cita quedó reservada!",bkFor:"Tu llamada por Zoom:",
  bkDoneP:"Tu cita es una videollamada por Zoom. Te contactamos para confirmarla, y el enlace de Zoom te llega por correo cuando tu cita esté confirmada.",
  bkContinue:"Continuar al contrato",
  tabBookings:"Citas",bkCols:["Reservada","Cita","Nombre","Correo","WhatsApp","Perfil de la empresa","Estimado","Estado","Zoom","Nota"],bkEmpty:"Sin citas todavía. Las reservas aparecen aquí en cuanto un vendedor aparta su horario.",
- bkZoomBtn:"Crear Zoom",bkZoomFor:"Invitados: Gil, Tyler, Miguel"
+ bkZoomBtn:"Crear Zoom",bkZoomFor:"Invitados: Gil, Tyler, Miguel",
+ tabLeads:"Leads",leadCols:["Recibido","Nombre","Empresa","WhatsApp / Teléfono","Correo","Industria","¿Puede aprobar?","Empleados","Años","Puesto","Origen","Asignado a","Estado"],leadEmpty:"Sin leads todavía. Los leads del embudo y de los anuncios aparecen aquí en cuanto llegan.",leadUnassigned:"Sin asignar"
 });

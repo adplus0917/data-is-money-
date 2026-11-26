@@ -212,19 +212,86 @@ app.post("/api/contact", limiter(20, 10 * 60e3), async (req, res) => {
   catch (e) { console.error(e); res.status(500).json({ error: "could not save" }); }
 });
 
-/* ---------- appointment booking (Nov 25 2026; every-day + company
-   name Nov 26 2026) ----------
-   The step after the valuation: the seller picks one of the next 7 ET
-   calendar days (every day, weekends included — Miguel: a Zoom meeting
-   offered every day) + a morning/afternoon window. Company name is
-   required (it comes from the price-gate lead) so the team can follow
-   back up with the company. The booking stores the FULL screening
-   profile (answers + the SERVER-computed estimate — the client's
-   numbers are never trusted) so the team panel shows the whole company
-   picture next to the appointment. The meeting type is Zoom: the team
-   creates it from the panel (one-click Create Zoom → server/zoom.js);
-   the seller's confirmation names Zoom and the join link is emailed
-   once the meeting exists. No email/SMS is sent from this route. */
+/* ---------- funnel lead capture (Nov 26 2026, Miguel's direct order) ----------
+   The price gate now saves a structured LEAD (not just a message): name,
+   company name, email, optional WhatsApp/phone, and the five qualifier
+   answers (industry, data-sharing authority, employee band, years band,
+   position — the competitor questionnaire Miguel walked). The lead lands
+   in the leads table, which is the CRM calling list the Panama team
+   works from the staff console (status + assignee + Unassigned queue).
+   The gate ALSO writes the legacy contact_messages row (the client sends
+   the same human-readable summary lines it always did, extended with the
+   qualifier answers) so the panel's Messages tab is unchanged. */
+app.post("/api/leads", limiter(20, 10 * 60e3), async (req, res) => {
+  const b = req.body || {};
+  const track = b.track == null || b.track === "" ? null : (opt.TRACKS.includes(b.track) ? b.track : undefined);
+  if (track === undefined) return res.status(400).json({ error: "unknown track" });
+  const chk = opt.checkLead(b, { requireQualifiers: true });
+  if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
+  try {
+    const row = await db.createLead({ ...chk.lead, source: "site_gate", lang: b.lang === "es" ? "es" : "en" });
+    const message = opt.str(b.message, 2000);
+    if (message) { try { await db.addContactMessage({ name: chk.lead.name, email: chk.lead.email, message, lang: b.lang === "es" ? "es" : "en", track }); } catch (e) { console.error("lead contact mirror failed", e); } }
+    log({ actor: "visitor:" + row.email, action: "lead.created", detail: { lead: row.id, source: row.source, company: row.company_name, industry: row.industry, ip: req.ip } });
+    res.status(201).json({ ok: true, id: row.id });
+  } catch (e) { console.error("lead failed", e); res.status(500).json({ error: "could not save" }); }
+});
+
+/* ---------- Meta instant-form intake (Nov 26 2026) ----------
+   When the Florida ad runs, Meta's native lead form pre-fills the
+   visitor's contact info from their Facebook/Instagram profile and the
+   five qualifiers ride as custom questions. Those leads land in the
+   SAME leads table with source 'meta_instant_form'. Guarded by the
+   LEAD_INTAKE_TOKEN env var (Render, sync:false — set by hand, never in
+   the repo): send it as the X-Intake-Token header or an Authorization
+   Bearer token. The GET route answers Meta's webhook verification
+   handshake (hub.challenge) with the same token as hub.verify_token.
+   Accepts normalized JSON (name/full_name, email/email_address,
+   phone/phone_number, company_name/company, website, and the five
+   qualifier codes flat or under `qualifiers`). A raw Meta webhook
+   payload carries only a leadgen_id — resolving it needs a Graph API
+   pull with a page token, which is wired when the ad account is set up;
+   this endpoint is the intake side only (no Meta app is created here). */
+const intakeTokenOk = req => {
+  const t = process.env.LEAD_INTAKE_TOKEN || "";
+  if (!t) return false;
+  const given = req.get("X-Intake-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const a = Buffer.from(String(given)), c = Buffer.from(t);
+  return a.length === c.length && crypto.timingSafeEqual(a, c);
+};
+app.get("/api/intake/meta", (req, res) => {
+  const q = req.query || {};
+  const t = process.env.LEAD_INTAKE_TOKEN || "";
+  if (q["hub.mode"] === "subscribe" && t && q["hub.verify_token"] === t && q["hub.challenge"]) return res.status(200).send(String(q["hub.challenge"]));
+  return res.status(403).json({ error: "verification failed" });
+});
+app.post("/api/intake/meta", limiter(60, 10 * 60e3), async (req, res) => {
+  if (!process.env.LEAD_INTAKE_TOKEN) return res.status(503).json({ error: "intake not configured (LEAD_INTAKE_TOKEN is not set)" });
+  if (!intakeTokenOk(req)) return res.status(401).json({ error: "bad intake token" });
+  const chk = opt.checkLead(req.body || {}, { requireQualifiers: false });
+  if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
+  try {
+    const row = await db.createLead({ ...chk.lead, source: "meta_instant_form", lang: (req.body || {}).lang === "es" ? "es" : "en" });
+    log({ actor: "meta-intake", action: "lead.created", detail: { lead: row.id, source: row.source, company: row.company_name, industry: row.industry } });
+    res.status(201).json({ ok: true, id: row.id });
+  } catch (e) { console.error("meta intake failed", e); res.status(500).json({ error: "could not save" }); }
+});
+
+/* ---------- appointment booking (Nov 25 2026; single 2 PM slot +
+   company name + qualifiers Nov 26 2026) ----------
+   The step after the valuation: the seller picks one of the next 10 ET
+   business days (Mon–Fri) for the ONE daily slot — 2:00 PM ET, 30-minute
+   Zoom (Miguel's Nov 26 decision; replaces the two-window every-day
+   offer). Company name is required (it comes from the price-gate lead)
+   so the team can follow back up with the company. The booking stores
+   the FULL screening profile (answers + the SERVER-computed estimate —
+   the client's numbers are never trusted) plus the qualifier answers,
+   so the team panel shows the whole company picture next to the
+   appointment. The meeting type is Zoom: the team creates it from the
+   panel (one-click Create Zoom → server/zoom.js); the seller's
+   confirmation names Zoom and the join link is emailed once the meeting
+   exists. No email/SMS is sent from this route. When the booking lands,
+   the matching open lead (same email) flips to status 'booked'. */
 app.post("/api/bookings", limiter(20, 10 * 60e3), async (req, res) => {
   const chk = opt.checkBooking(req.body || {});
   if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
@@ -234,17 +301,21 @@ app.post("/api/bookings", limiter(20, 10 * 60e3), async (req, res) => {
     const profile = { ...bk.answers, estimate_low: v.low, estimate_high: v.high, estimate_point: v.point, tier: v.tier, score: v.score, engine_version: ENGINE_VERSION };
     const row = await db.createBooking({
       name: bk.name, company_name: bk.company_name, email: bk.email, phone: bk.phone, note: bk.note,
-      appt_date: bk.appt_date, window: bk.window,
+      appt_date: bk.appt_date, window: bk.window, qualifiers: bk.qualifiers,
       lang: (req.body || {}).lang === "es" ? "es" : "en",
       profile, zoom_invitees: opt.ZOOM_INVITEES,
     });
+    // Flip the matching open lead to booked (best-effort: the booking is
+    // the record of truth, a missing lead must never fail the booking).
+    try { await db.markLeadBooked(row.email, row.id, "funnel"); } catch (e) { console.error("lead book-flip failed", e); }
     log({ actor: "visitor:" + row.email, action: "booking.created", detail: { booking: row.id, company: row.company_name, date: row.appt_date, window: row.window, estimate: [v.low, v.high], ip: req.ip } });
-    res.status(201).json({ ok: true, id: row.id, date: row.appt_date, window: row.window, meeting_type: "zoom", zoom_status: row.zoom_status });
+    res.status(201).json({ ok: true, id: row.id, date: row.appt_date, window: row.window, slot_time: opt.BOOKING_SLOT.time, meeting_type: "zoom", zoom_status: row.zoom_status });
   } catch (e) { console.error("booking failed", e); res.status(500).json({ error: "could not save, please try again" }); }
 });
-// The offered days, so the client and the team see the same list the
-// server validates against (single source: server/options.js bookingDays).
-app.get("/api/bookings/days", (req, res) => res.json({ days: opt.bookingDays(), windows: opt.BOOKING_WINDOWS, tz: opt.BOOKING_TZ }));
+// The offered days + the single daily slot, so the client and the team
+// see the same list the server validates against (single source:
+// server/options.js bookingDays / BOOKING_SLOT).
+app.get("/api/bookings/days", (req, res) => res.json({ days: opt.bookingDays(), windows: opt.BOOKING_WINDOWS, slot: opt.BOOKING_SLOT, tz: opt.BOOKING_TZ }));
 
 /* ---------- team panel API (password protected) ---------- */
 app.post("/api/admin/login", limiter(8, 60e3), (req, res) => {

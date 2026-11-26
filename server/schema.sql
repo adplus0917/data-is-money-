@@ -414,6 +414,52 @@ CREATE INDEX IF NOT EXISTS bookings_appt_idx ON bookings (appt_date, "window");
 -- Company name on the booking (Nov 26 2026) for databases created before it.
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS company_name text;
 
+-- =====================================================================
+-- FUNNEL LEADS + QUALIFIER QUESTIONNAIRE (Nov 26 2026, Miguel's direct
+-- order). One leads object for every inbound lead, whatever the door:
+-- the site price gate (source 'site_gate'), Meta instant-form ads
+-- (source 'meta_instant_form', via the token-guarded intake endpoint),
+-- or a manual console entry later ('manual'). The five qualifier answers
+-- (industry / data-sharing authority / employee band / years band /
+-- position) mirror the competitor intake Miguel walked; codes are
+-- validated in server/options.js. Callers (Panama team; Gil/Tyler are
+-- sales-lane admins) work this list: status is caller-updatable and
+-- assigned_to holds a staff email (NULL = the Unassigned queue anyone
+-- can claim from). When the lead books the 2 PM Zoom, booking_id links
+-- the appointment and status flips to 'booked'. The same five columns
+-- also ride on bookings so the appointments view shows them.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS leads (
+  id                bigserial PRIMARY KEY,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  source            text NOT NULL DEFAULT 'site_gate' CHECK (source IN ('site_gate','meta_instant_form','manual')),
+  name              text NOT NULL,
+  company_name      text NOT NULL,
+  email             text NOT NULL,
+  phone             text,
+  website           text,
+  industry          text,
+  data_authority    text,
+  employee_band     text,
+  years_band        text,
+  position          text,
+  lang              text,
+  status            text NOT NULL DEFAULT 'new' CHECK (status IN ('new','called','booked','not_interested')),
+  assigned_to       text,
+  booking_id        bigint,
+  status_updated_at timestamptz,
+  status_updated_by text
+);
+CREATE INDEX IF NOT EXISTS leads_created_idx ON leads (created_at DESC);
+CREATE INDEX IF NOT EXISTS leads_queue_idx ON leads (assigned_to, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS leads_email_idx ON leads (lower(email));
+-- Qualifier answers on the booking row as well (Nov 26 2026).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS industry text;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS data_authority text;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS employee_band text;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS years_band text;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS position text;
+
 CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
 BEGIN
   PERFORM pg_advisory_xact_lock(727274);           -- one writer at a time keeps the chain linear

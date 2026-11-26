@@ -58,17 +58,27 @@ S.fbOpen = false;
 S.contact = S.contact || { name: "", email: "", message: "", sent: false, err: "" };
 S.chat = S.chat || { open: false, sessionId: null, msgs: [], emailOpen: false, email: "", emailMsg: "", emailSent: false, emailErr: "", busy: false };
 /* price gate (Nov 25 2026): the step-4 estimate stays hidden until the
-   visitor leaves name + email; the lead is saved via /api/contact into
-   the existing contact_messages capture (team panel → Messages).
-   Company name joined the gate Nov 26 2026 (Miguel's direction): the
-   lead must carry the company so the team can follow back up. Sessions
-   saved before then have no company field — default it in. */
-S.gate = S.gate || { name: "", company: "", email: "", phone: "", done: false, err: "", busy: false };
+   visitor leaves name + email; the lead is saved via /api/leads into the
+   CRM leads table (and mirrored into contact_messages, team panel →
+   Messages). Company name joined the gate Nov 26 2026 (Miguel's
+   direction): the lead must carry the company so the team can follow
+   back up. The five qualifier answers (industry / data-sharing
+   authority / employee band / years band / position) joined the same
+   day — the competitor questionnaire Miguel walked, feeding the CRM
+   calling list. Sessions saved before then lack the fields — default
+   them in. */
+const blankQual = () => ({ industry: "", data_authority: "", employee_band: "", years_band: "", position: "" });
+S.gate = S.gate || { name: "", company: "", email: "", phone: "", q: blankQual(), done: false, err: "", busy: false };
 if (S.gate.company === undefined) S.gate.company = "";
+if (!S.gate.q) S.gate.q = blankQual();
 /* appointment booking (Nov 25 2026): the step right after the valuation.
    Contact comes from the gate (no re-typing); the server stores the
-   booking with the full screening profile attached. */
-S.book = S.book || { date: "", window: "", note: "", done: false, err: "", busy: false, id: null };
+   booking with the full screening profile attached. Since Nov 26 2026
+   there is ONE slot — the daily 2:00 PM ET Zoom (window code
+   "afternoon") — so an unfinished pick from the old two-window days is
+   normalized to it. */
+S.book = S.book || { date: "", window: "afternoon", note: "", done: false, err: "", busy: false, id: null };
+if (!S.book.done && S.book.window !== "afternoon") S.book.window = "afternoon";
 const save = () => SS.set("dp.session", S);
 const L = () => T[S.lang];
 const lab = (list, code) => { const r = O[list].find(x => x[0] === code); return r ? (S.lang === "es" ? r[2] : r[1]) : (code || "—"); };
@@ -88,6 +98,7 @@ const API = {
     return this.post("/api/submissions", { answers, contact, manifest: L().man.map((_, i) => a.man.includes(i)), lang, ...(bookingId ? { booking_id: bookingId } : {}) });
   },
   book(body) { return this.post("/api/bookings", body); },
+  lead(body) { return this.post("/api/leads", body); },
   async upload(folio, token, file) {
     const fd = new FormData(); fd.append("files", file);
     const r = await fetch(`/api/submissions/${encodeURIComponent(folio)}/samples`, { method: "POST", headers: { "X-Upload-Token": token }, body: fd });
@@ -148,14 +159,15 @@ function stepHTML() {
 }
 
 /* Price gate: shown in place of the step-4 estimate until the visitor's
-   name + company name + email are saved. The lead goes through the
-   EXISTING /api/contact capture (contact_messages, team panel →
-   Messages) with the funnel answers attached — no parallel store, no
-   new table. */
+   name + company name + email AND the five qualifier answers are saved.
+   The lead goes through /api/leads into the CRM leads table; the server
+   also mirrors the human-readable summary lines into contact_messages
+   (team panel → Messages), unchanged in format. */
 function gateHTML() {
   const l = L(), g = S.gate;
   const emErr = g.email.trim() ? emailErrorClient(g.email) : null;
   const em = emErr === "tld" ? l.errEmailTld : emErr === "format" ? l.errEmailFmt : "";
+  const gq = (list, key, label) => `<span class="q">${label}</span><div class="opts">${O[list].map(([c]) => `<button type="button" class="opt" data-gq="${key}" data-v="${c}" aria-pressed="${g.q[key] === c}">${esc(lab(list, c))}</button>`).join("")}</div>`;
   return `<div class="kick">${l.stepOf(4, l.steps.length)}</div><h2>${l.gateT}</h2><p class="sub">${l.gateS}</p>
    <div class="fields">
     <div class="f"><label for="g_name">${l.gateName}</label><input id="g_name" data-g="name" type="text" autocomplete="name" maxlength="160" value="${esc(g.name)}"></div>
@@ -163,6 +175,11 @@ function gateHTML() {
     <div class="f"><label for="g_email">${l.fEmail}</label><input id="g_email" data-g="email" type="email" autocomplete="email" maxlength="200" value="${esc(g.email)}"><div class="emsg" role="alert">${esc(em)}</div></div>
     <div class="f"><label for="g_phone">${l.gateWa}</label><input id="g_phone" data-g="phone" type="tel" autocomplete="tel" maxlength="40" value="${esc(g.phone)}"></div>
    </div>
+   ${gq("industry", "industry", l.qIndustry)}
+   ${gq("authority", "data_authority", l.qAuthority)}
+   ${gq("empband", "employee_band", l.qEmpBand)}
+   ${gq("yearsband", "years_band", l.qYearsBand)}
+   ${gq("position", "position", l.qPosition)}
    <p class="disc">${l.gateNote}</p>
    <p class="err" id="err">${esc(g.err)}</p><div class="nav"><button type="button" class="btn" id="back">${l.back}</button><button type="button" class="btn go" id="gateGo" ${g.busy ? "disabled" : ""}>${l.gateBtn}</button></div>` + fbBox(4);
 }
@@ -174,12 +191,18 @@ async function gateSubmit() {
   if (!g.company.trim()) { g.err = l.gateErrCompany; save(); render(); return; }
   const emErr = emailErrorClient(g.email);
   if (emErr) { g.err = emErr === "tld" ? l.errEmailTld : l.errEmailFmt; save(); render(); return; }
+  if (Object.values(g.q).some(v => !v)) { g.err = l.gateErrQual; save(); render(); return; }
   g.busy = true; g.err = ""; save(); render();
   const lines = [l.gateLead,
     `${l.gateName}: ${g.name.trim()}`,
     `${l.gateCompany}: ${g.company.trim()}`,
     `${l.fEmail}: ${g.email.trim()}`,
     g.phone.trim() ? `${l.gateWa}: ${g.phone.trim()}` : null,
+    `${l.qIndustry}: ${lab("industry", g.q.industry)}`,
+    `${l.qAuthority}: ${lab("authority", g.q.data_authority)}`,
+    `${l.qEmpBand}: ${lab("empband", g.q.employee_band)}`,
+    `${l.qYearsBand}: ${lab("yearsband", g.q.years_band)}`,
+    `${l.qPosition}: ${lab("position", g.q.position)}`,
     `${l.qSector}: ${lab("sector", a.sector)}`,
     `${l.qRec}: ${lab("years", a.record_years)}`,
     `${l.qEmp}: ${lab("emp", a.employees)}`,
@@ -187,7 +210,7 @@ async function gateSubmit() {
     `${l.qRev}: ${lab("rev", a.revenue_band)}`,
     `${l.qTrack}: ${lab("track", a.track)}`].filter(Boolean).join("\n");
   try {
-    await API.contact(g.name.trim(), g.email.trim(), lines, a.track);
+    await API.lead({ name: g.name.trim(), company_name: g.company.trim(), email: g.email.trim(), phone: g.phone.trim(), qualifiers: { ...g.q }, track: a.track, lang: S.lang, message: lines });
     g.done = true; g.busy = false;
     if (!a.owner_name) a.owner_name = g.name.trim();
     if (!a.company_name) a.company_name = g.company.trim();
@@ -401,19 +424,18 @@ function afterPick() {
 /* ---------- actions ---------- */
 /* ----- appointment booking (step 5 of 7, right after the valuation) -----
    Same algorithm as the server (server/options.js bookingDays): the next
-   7 America/New_York calendar days — EVERY day, weekends included
-   (Nov 26 2026, Miguel: a Zoom meeting offered every day) — with
-   morning/afternoon windows. The server re-derives the list and
-   validates, so this is display + convenience. If the server is ever
-   switched back to business-days-only (BOOKING_EVERY_DAY=false), a
-   weekend pick here is rejected with the server's message and the
-   stale-pick cleanup below drops it. */
+   10 America/New_York BUSINESS days (Mon–Fri only) for the ONE daily
+   slot — 2:00 PM ET, 30-minute Zoom (Nov 26 2026, Miguel's decision;
+   replaces the every-day two-window offer). The server re-derives the
+   list and validates, so this is display + convenience; the stale-pick
+   cleanup below drops a saved date that has rolled off the list. */
 function bookingDaysClient() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map(x => [x.type, x.value]));
   const cur = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)), out = [];
-  while (out.length < 7) {
+  while (out.length < 10) {
     cur.setUTCDate(cur.getUTCDate() + 1);
-    out.push({ date: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}-${String(cur.getUTCDate()).padStart(2, "0")}`, weekday: cur.getUTCDay() });
+    const wd = cur.getUTCDay();
+    if (wd >= 1 && wd <= 5) out.push({ date: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}-${String(cur.getUTCDate()).padStart(2, "0")}`, weekday: wd });
   }
   return out;
 }
@@ -431,7 +453,7 @@ function bookingHTML() {
   const days = bookingDaysClient();
   if (bk.date && !days.some(d => d.date === bk.date)) bk.date = ""; // the offered list rolled past a stale pick
   const dayBtns = days.map(d => `<button type="button" class="opt" data-bk="date" data-v="${d.date}" aria-pressed="${bk.date === d.date}">${esc(bkDayLabel(d.date))}</button>`).join("");
-  const winBtns = ["morning", "afternoon"].map(w => `<button type="button" class="opt" data-bk="window" data-v="${w}" aria-pressed="${bk.window === w}">${esc(w === "morning" ? l.bkMorning : l.bkAfternoon)}<small>${esc(w === "morning" ? l.bkMorningH : l.bkAfternoonH)}</small></button>`).join("");
+  const winBtns = `<button type="button" class="opt" data-bk="window" data-v="afternoon" aria-pressed="true">${esc(l.bkAfternoon)}<small>${esc(l.bkAfternoonH)}</small></button>`;
   return h + `<p class="intro">${l.bkContactL} <b>${esc(g.name)}</b>${g.company ? " · " + esc(g.company) : ""} · ${esc(g.email)}${g.phone ? " · " + esc(g.phone) : ""}</p>
    <p class="disc">${l.bkZoomNote}</p>
    <span class="q">${l.bkDayL}</span><div class="opts wide">${dayBtns}</div>
@@ -448,7 +470,7 @@ async function bookingSubmit() {
   bk.busy = true; bk.err = ""; save(); render();
   const answers = { sector: a.sector, years_in_business: a.years_in_business, employees: a.employees, record_years: a.record_years, data_types: a.data_types, record_volume: a.record_volume, revenue_band: a.revenue_band, format: a.format, frequency: a.frequency, track: a.track };
   try {
-    const r = await API.book({ name: g.name.trim(), company_name: g.company.trim(), email: g.email.trim(), phone: g.phone.trim(), date: bk.date, window: bk.window, note: bk.note.trim(), answers, lang: S.lang });
+    const r = await API.book({ name: g.name.trim(), company_name: g.company.trim(), email: g.email.trim(), phone: g.phone.trim(), date: bk.date, window: bk.window, note: bk.note.trim(), answers, qualifiers: { ...g.q }, lang: S.lang });
     bk.done = true; bk.id = r.id; bk.busy = false;
     save(); render(); $("start").scrollIntoView({ block: "start" });
   } catch (e) {
@@ -548,6 +570,7 @@ document.addEventListener("click", e => {
   if (b.dataset.k) { S.a[b.dataset.k] = b.dataset.v; render(); afterPick(); return; }
   if (b.dataset.type) { const k = b.dataset.type; S.a.data_types = S.a.data_types.includes(k) ? S.a.data_types.filter(x => x !== k) : [...S.a.data_types, k]; render(); afterPick(); return; }
   if (b.id === "gateGo") { stopAdv(); gateSubmit(); return; }
+  if (b.dataset.gq) { S.gate.q[b.dataset.gq] = b.dataset.v; S.gate.err = ""; save(); render(); return; }
   if (b.dataset.bk) { S.book[b.dataset.bk] = b.dataset.v; S.book.err = ""; render(); return; }
   if (b.id === "bkGo") { stopAdv(); bookingSubmit(); return; }
   if (b.id === "bkSkip" || b.id === "bkContinue") { stopAdv(); S.step = 5; save(); render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" }); return; }

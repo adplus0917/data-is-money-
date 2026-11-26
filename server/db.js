@@ -106,13 +106,59 @@ function postgres(url) {
       const { rows } = await pool.query(`SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT 5000`);
       return rows;
     },
+    /* ----- funnel leads (qualifier questionnaire → CRM calling list) ----- */
+    async createLead(l) {
+      const { rows: [r] } = await pool.query(
+        `INSERT INTO leads (source, name, company_name, email, phone, website, industry, data_authority, employee_band, years_band, position, lang)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [l.source || "site_gate", l.name, l.company_name, l.email, l.phone || null, l.website || null,
+         l.industry || null, l.data_authority || null, l.employee_band || null, l.years_band || null, l.position || null, l.lang || null]);
+      return r;
+    },
+    async listLeads(f = {}) {
+      const where = [], v = [];
+      if (f.status) { v.push(f.status); where.push(`status=$${v.length}`); }
+      if (f.unassigned) where.push(`assigned_to IS NULL`);
+      else if (f.assigned_to) { v.push(f.assigned_to); where.push(`assigned_to=$${v.length}`); }
+      const { rows } = await pool.query(
+        `SELECT * FROM leads ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT 5000`, v);
+      return rows;
+    },
+    async getLead(id) {
+      const { rows } = await pool.query(`SELECT * FROM leads WHERE id=$1`, [id]);
+      return rows[0] || null;
+    },
+    // Caller updates: status and/or assigned_to and/or booking_id. A status
+    // change stamps who/when so the console shows the last touch.
+    async updateLead(id, p) {
+      const sets = [], v = [];
+      for (const k of ["status", "assigned_to", "booking_id"]) if (p[k] !== undefined) { v.push(p[k]); sets.push(`${k}=$${v.length}`); }
+      if (!sets.length) return null;
+      if (p.status !== undefined) { sets.push("status_updated_at = now()"); if (p.updated_by) { v.push(p.updated_by); sets.push(`status_updated_by=$${v.length}`); } }
+      v.push(id);
+      const { rows: [r] } = await pool.query(`UPDATE leads SET ${sets.join(", ")} WHERE id=$${v.length} RETURNING *`, v);
+      return r || null;
+    },
+    // When a lead books the Zoom, flip the newest open lead with that email
+    // to booked and link the appointment. Best-effort by design (the booking
+    // itself is the record of truth).
+    async markLeadBooked(email, bookingId, actor) {
+      const { rows: [r] } = await pool.query(
+        `UPDATE leads SET status='booked', booking_id=$2, status_updated_at=now(), status_updated_by=$3
+         WHERE id = (SELECT id FROM leads WHERE lower(email)=lower($1) AND status <> 'booked' ORDER BY created_at DESC LIMIT 1)
+         RETURNING *`, [email, bookingId, actor || "funnel"]);
+      return r || null;
+    },
     /* ----- appointment bookings (screening profile rides along) ----- */
     async createBooking(bk) {
+      const q = bk.qualifiers || {};
       const { rows: [r] } = await pool.query(
-        `INSERT INTO bookings (name, company_name, email, phone, appt_date, "window", note, lang, folio, profile, zoom_invitees)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, appt_date::text AS appt_date`,
+        `INSERT INTO bookings (name, company_name, email, phone, appt_date, "window", note, lang, folio, profile, zoom_invitees, industry, data_authority, employee_band, years_band, position)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *, appt_date::text AS appt_date`,
         [bk.name, bk.company_name || null, bk.email, bk.phone || null, bk.appt_date, bk.window, bk.note || null, bk.lang || null, bk.folio || null,
-         JSON.stringify(bk.profile), bk.zoom_invitees || []]);
+         JSON.stringify(bk.profile), bk.zoom_invitees || [],
+         q.industry || bk.industry || null, q.data_authority || bk.data_authority || null, q.employee_band || bk.employee_band || null,
+         q.years_band || bk.years_band || null, q.position || bk.position || null]);
       return r;
     },
     async listBookings() {
@@ -306,7 +352,7 @@ function jsonFile(dir) {
   let chain = Promise.resolve();
   const locked = fn => (chain = chain.then(fn, fn));            // one write at a time
   const load = () => { let d; try { d = JSON.parse(fs.readFileSync(file, "utf8")); } catch { d = {}; }
-    return Object.assign({ counters: {}, submissions: [], samples: [], feedback: [], history: [], ids: 0, chatSessions: [], chatMessages: [], contactMessages: [], bookings: [], staffUsers: [], outbox: [], offers: [], partnerMessages: [], fileMessages: [], checklist: [], fileNotes: {} }, d); };
+    return Object.assign({ counters: {}, submissions: [], samples: [], feedback: [], history: [], ids: 0, chatSessions: [], chatMessages: [], contactMessages: [], bookings: [], leads: [], staffUsers: [], outbox: [], offers: [], partnerMessages: [], fileMessages: [], checklist: [], fileNotes: {} }, d); };
   const save = d => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file + ".tmp", JSON.stringify(d, null, 1)); fs.renameSync(file + ".tmp", file); };
   const strip = s => { const { upload_token_hash, ...r } = s; return r; };
 
@@ -362,11 +408,41 @@ function jsonFile(dir) {
       d.contactMessages.push(r); save(d); return r;
     }),
     async listContactMessages() { return load().contactMessages.slice().reverse(); },
+    /* ----- funnel leads (JSON-file mirrors) ----- */
+    createLead: l => locked(() => {
+      const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), source: l.source || "site_gate",
+        name: l.name, company_name: l.company_name, email: l.email, phone: l.phone || null, website: l.website || null,
+        industry: l.industry || null, data_authority: l.data_authority || null, employee_band: l.employee_band || null,
+        years_band: l.years_band || null, position: l.position || null, lang: l.lang || null,
+        status: "new", assigned_to: null, booking_id: null, status_updated_at: null, status_updated_by: null };
+      d.leads.push(r); save(d); return r;
+    }),
+    async listLeads(f = {}) {
+      return load().leads.slice().reverse().filter(l =>
+        (!f.status || l.status === f.status) &&
+        (f.unassigned ? !l.assigned_to : !f.assigned_to || l.assigned_to === f.assigned_to));
+    },
+    async getLead(id) { return load().leads.find(x => x.id === Number(id)) || null; },
+    updateLead: (id, p) => locked(() => {
+      const d = load(), r = d.leads.find(x => x.id === Number(id));
+      if (!r) return null;
+      for (const k of ["status", "assigned_to", "booking_id"]) if (p[k] !== undefined) r[k] = p[k];
+      if (p.status !== undefined) { r.status_updated_at = new Date().toISOString(); r.status_updated_by = p.updated_by || null; }
+      save(d); return r;
+    }),
+    markLeadBooked: (email, bookingId, actor) => locked(() => {
+      const d = load(), r = d.leads.slice().reverse().find(x => x.email.toLowerCase() === String(email).toLowerCase() && x.status !== "booked");
+      if (!r) return null;
+      r.status = "booked"; r.booking_id = bookingId; r.status_updated_at = new Date().toISOString(); r.status_updated_by = actor || "funnel";
+      save(d); return r;
+    }),
     /* ----- appointment bookings (JSON-file mirrors) ----- */
     createBooking: bk => locked(() => {
-      const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), status: "pending",
+      const d = load(), q = bk.qualifiers || {}, r = { id: ++d.ids, created_at: new Date().toISOString(), status: "pending",
         zoom_status: "none", zoom_meeting_id: null, zoom_join_url: null, zoom_start_url: null, zoom_created_at: null, zoom_note: null,
         name: bk.name, company_name: bk.company_name || null, email: bk.email, phone: bk.phone || null, appt_date: bk.appt_date, window: bk.window, note: bk.note || null,
+        industry: q.industry || bk.industry || null, data_authority: q.data_authority || bk.data_authority || null,
+        employee_band: q.employee_band || bk.employee_band || null, years_band: q.years_band || bk.years_band || null, position: q.position || bk.position || null,
         lang: bk.lang || null, folio: bk.folio || null, profile: bk.profile, zoom_invitees: bk.zoom_invitees || [] };
       d.bookings.push(r); save(d); return r;
     }),

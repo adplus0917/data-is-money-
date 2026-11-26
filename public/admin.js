@@ -38,16 +38,19 @@ const API = {
   chats() { return this.call("GET", "/api/admin/chats"); },
   contactMessages() { return this.call("GET", "/api/admin/contact-messages"); },
   bookings() { return this.call("GET", "/api/admin/bookings"); },
+  leads() { return this.call("GET", "/api/admin/console/leads"); },
+  staffList() { return this.call("GET", "/api/admin/staff"); },
+  setLead(id, patch) { return this.call("PATCH", "/api/admin/console/leads/" + encodeURIComponent(id), patch); },
   setStatus(folio, status) { return this.call("PATCH", "/api/admin/submissions/" + encodeURIComponent(folio), { status }); },
   setBookingStatus(id, status) { return this.call("PATCH", "/api/admin/bookings/" + encodeURIComponent(id), { status }); },
   zoomBooking(id) { return this.call("POST", "/api/admin/bookings/" + encodeURIComponent(id) + "/zoom"); },
 };
 
-let signedIn = false, rows = [], frows = [], crows = [], mrows = [], brows = [], tab = "subs", timer = null, err = "", vaultOn = false;
+let signedIn = false, rows = [], frows = [], crows = [], mrows = [], brows = [], lrows = [], srows = [], tab = "subs", timer = null, err = "", vaultOn = false;
 fetch("/api/config").then(r => r.json()).then(j => { vaultOn = !!j.vault; if (signedIn) render(); }).catch(() => {});
 
 async function load() {
-  try { [rows, frows, crows, mrows, brows] = await Promise.all([API.submissions(), API.feedback(), API.chats(), API.contactMessages(), API.bookings()]); if (vaultOn && tab === "vault") await VAULT_TAB.load(); err = ""; }
+  try { [rows, frows, crows, mrows, brows, lrows, srows] = await Promise.all([API.submissions(), API.feedback(), API.chats(), API.contactMessages(), API.bookings(), API.leads(), API.staffList().catch(() => [])]); if (vaultOn && tab === "vault") await VAULT_TAB.load(); err = ""; }
   catch (e) { if (e.status === 401) { signedIn = false; clearInterval(timer); } else err = L().netErr; }
   render();
 }
@@ -63,7 +66,7 @@ function panelHTML() {
   const l = L();
   const dt = x => { const d = new Date(x); return isNaN(d) ? "—" : d.toLocaleString(lang === "es" ? "es-US" : "en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
   const pipe = rows.filter(r => r.status !== "Pagado").reduce((s, r) => s + (+r.estimate_high || 0), 0);
-  const tbs = [["subs", l.tabSubs], ["fb", l.tabFb], ["chats", l.tabChats], ["contact", l.tabContact], ["bookings", l.tabBookings], ...(vaultOn ? [["vault", VAULT_TAB.label(lang)]] : []), ["how", l.tabHow], ["eng", l.tabEng]].map(([k, t]) => `<button type="button" class="pill" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join("");
+  const tbs = [["subs", l.tabSubs], ["fb", l.tabFb], ["chats", l.tabChats], ["contact", l.tabContact], ["bookings", l.tabBookings], ["leads", l.tabLeads], ...(vaultOn ? [["vault", VAULT_TAB.label(lang)]] : []), ["how", l.tabHow], ["eng", l.tabEng]].map(([k, t]) => `<button type="button" class="pill" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join("");
   let body = "";
   if (tab === "subs") body = `<div class="nav" style="margin:0 0 14px"><a class="btn" href="/api/admin/export.csv">${l.exCsv}</a><a class="btn" href="/api/admin/export.csv?table=feedback">CSV · ${l.tabFb}</a><a class="btn" href="/api/admin/export.json">${l.exJson}</a></div>` +
     (rows.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>
@@ -92,6 +95,19 @@ function panelHTML() {
       <td><select data-bkstatus="${esc(bk.id)}" aria-label="Booking status">${O.bkstatus.map(([s]) => `<option value="${esc(s)}" ${bk.status === s ? "selected" : ""}>${esc(lab("bkstatus", s))}</option>`).join("")}</select></td>
       <td>${zoomCell(bk)}</td>
       <td>${esc(bk.note || "—")}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="sub">${l.bkEmpty}</p>`;
+  }
+  if (tab === "leads") {
+    // CRM calling list (Nov 26 2026): qualifier leads from the site gate
+    // and Meta instant forms. Status + assignee are caller-updatable;
+    // "Unassigned" is the queue any caller claims from (claim itself is
+    // done from a staff account in the console API).
+    body = lrows.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.leadCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${lrows.map(x => `<tr>
+      <td style="white-space:nowrap">${dt(x.created_at)}</td>
+      <td>${esc(x.name)}</td><td>${esc(x.company_name)}</td><td>${esc(x.phone || "—")}</td><td>${esc(x.email)}</td>
+      <td>${esc(lab("industry", x.industry))}</td><td>${esc(lab("authority", x.data_authority))}</td><td>${esc(lab("empband", x.employee_band))}</td><td>${esc(lab("yearsband", x.years_band))}</td><td>${esc(lab("position", x.position))}</td>
+      <td>${esc(lab("leadsource", x.source))}</td>
+      <td><select data-leadassign="${esc(x.id)}" aria-label="Assignee"><option value="" ${!x.assigned_to ? "selected" : ""}>${esc(l.leadUnassigned)}</option>${srows.map(s => `<option value="${esc(s.email)}" ${x.assigned_to === s.email ? "selected" : ""}>${esc(s.name || s.email)}</option>`).join("")}</select></td>
+      <td><select data-leadstatus="${esc(x.id)}" aria-label="Lead status">${O.leadstatus.map(([s]) => `<option value="${esc(s)}" ${x.status === s ? "selected" : ""}>${esc(lab("leadstatus", s))}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${l.leadEmpty}</p>`;
   }
   if (tab === "vault") body = VAULT_TAB.render(lang);
   if (tab === "how") body = `<h3 style="font-size:20px">${l.pipeT}</h3><div class="hg">${l.pipe.map((h, n) => `<div><i>${n + 1}</i><h3>${h[0]}</h3><p>${h[1]}</p></div>`).join("")}</div>`;
@@ -143,6 +159,14 @@ document.addEventListener("submit", async e => {
 });
 document.addEventListener("change", async e => {
   const s = e.target;
+  if ((s.dataset.leadstatus || s.dataset.leadassign) && s.tagName === "SELECT") {
+    const id = s.dataset.leadstatus || s.dataset.leadassign;
+    const patch = s.dataset.leadstatus ? { status: s.value } : { assigned_to: s.value || null };
+    s.disabled = true;
+    try { await API.setLead(id, patch); const r = lrows.find(x => String(x.id) === String(id)); if (r) Object.assign(r, patch); }
+    catch (x) { err = x.message && x.status === 400 ? x.message : L().netErr; }
+    s.disabled = false; render(); return;
+  }
   if (s.dataset.bkstatus && s.tagName === "SELECT") {
     s.disabled = true;
     try { await API.setBookingStatus(s.dataset.bkstatus, s.value); const r = brows.find(x => String(x.id) === String(s.dataset.bkstatus)); if (r) r.status = s.value; }
