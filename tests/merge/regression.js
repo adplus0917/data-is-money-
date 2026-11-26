@@ -233,22 +233,27 @@ const MAN = [true, true, true, true, true];
     const csv = await (await fetch(W + "/api/admin/export.csv?table=contact", { headers: { Cookie: cookie } })).text();
     ok(/id,created_at,name,email,track,message/.test(csv) && csv.includes("compra_directa"), "HTTP: contact CSV export carries the track column and the single deal value");
 
-    /* appointment booking (Nov 25 2026): funnel ends by booking the call */
+    /* appointment booking (Nov 25 2026; every-day + company name Nov 26 2026):
+       funnel ends by booking the Zoom call — a slot offered EVERY day */
     const days = opt.bookingDays();
-    ok(days.length === 5 && days.every(d => d.weekday >= 1 && d.weekday <= 5), "booking: exactly 5 ET business days (Mon–Fri) are offered");
+    const consecutive = days.every((d, i) => i === 0 || (new Date(d.date + "T12:00:00Z") - new Date(days[i - 1].date + "T12:00:00Z")) === 86400e3);
+    ok(days.length === 7 && consecutive && days.some(d => d.weekday === 0) && days.some(d => d.weekday === 6), "booking: exactly 7 consecutive ET calendar days are offered, weekend included (Zoom every day)");
     r = await j(W + "/api/bookings/days");
-    ok(r.s === 200 && Array.isArray(r.b.days) && r.b.days.length === 5 && r.b.tz === "America/New_York", "HTTP: offered-days endpoint matches the server validator");
+    ok(r.s === 200 && Array.isArray(r.b.days) && r.b.days.length === 7 && r.b.tz === "America/New_York", "HTTP: offered-days endpoint matches the server validator");
     const bpost = body => j(W + "/api/bookings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    r = await bpost({ name: "Ana Paz", email: "ana@empresa.jet", date: days[0].date, window: "morning", answers });
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.jet", date: days[0].date, window: "morning", answers });
     ok(r.s === 400 && r.b.error_code === "email_tld", "HTTP: booking rejects a .jet email with the shared validator (got " + r.s + ")");
-    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", date: "2026-01-04", window: "morning", answers });
+    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", date: days[0].date, window: "morning", answers });
+    ok(r.s === 400 && /company name is required/.test(r.b.error || ""), "HTTP: booking rejects a missing company name (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", date: "2026-01-04", window: "morning", answers });
     ok(r.s === 400, "HTTP: booking rejects a day that is not in the offered list (got " + r.s + ")");
-    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", date: days[0].date, window: "evening", answers });
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", date: days[0].date, window: "evening", answers });
     ok(r.s === 400, "HTTP: booking rejects an unknown time window (got " + r.s + ")");
-    r = await bpost({ name: "Ana Paz", email: "ana@empresa.com", phone: "+1 813 555 0100", date: days[0].date, window: "afternoon", note: "Llamar después de las 2", answers, lang: "es" });
-    ok(r.s === 201 && r.b.id && r.b.date === days[0].date && r.b.window === "afternoon", "HTTP: booking created with an offered day + window (got " + r.s + ")");
+    r = await bpost({ name: "Ana Paz", company_name: "Empresa Ana SA", email: "ana@empresa.com", phone: "+1 813 555 0100", date: days[0].date, window: "afternoon", note: "Llamar después de las 2", answers, lang: "es" });
+    ok(r.s === 201 && r.b.id && r.b.date === days[0].date && r.b.window === "afternoon" && r.b.meeting_type === "zoom", "HTTP: booking created with an offered day + window, typed as a Zoom meeting (got " + r.s + ")");
     const bkId = r.b.id;
     const bkRow = JSON.parse(fs.readFileSync(path.join(dataDir, "db.json"), "utf8")).bookings.find(x => x.id === bkId);
+    ok(bkRow && bkRow.company_name === "Empresa Ana SA", "booking is stored WITH the company name from the lead");
     ok(bkRow && bkRow.status === "pending" && bkRow.profile && bkRow.profile.sector === "roof" && bkRow.profile.estimate_low > 0 && bkRow.profile.track === "compra_directa", "booking is stored with the FULL screening profile + server-computed estimate");
     ok(bkRow && Array.isArray(bkRow.zoom_invitees) && bkRow.zoom_invitees.includes("gconcepcion@cpointehomes.com") && bkRow.zoom_invitees.includes("tkruse@cpointehomes.com") && bkRow.zoom_invitees.includes("migueladplus@gmail.com") && bkRow.zoom_status === "none", "booking carries the Zoom invitee list (Gil, Tyler, Miguel); no meeting exists yet");
     r = await post({ answers, contact: { company_name: "X SA", owner_name: "Ana Paz", email: "ana@empresa.com", signature_name: "Ana Paz" }, manifest: MAN, booking_id: bkId });

@@ -109,9 +109,9 @@ function postgres(url) {
     /* ----- appointment bookings (screening profile rides along) ----- */
     async createBooking(bk) {
       const { rows: [r] } = await pool.query(
-        `INSERT INTO bookings (name, email, phone, appt_date, "window", note, lang, folio, profile, zoom_invitees)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *, appt_date::text AS appt_date`,
-        [bk.name, bk.email, bk.phone || null, bk.appt_date, bk.window, bk.note || null, bk.lang || null, bk.folio || null,
+        `INSERT INTO bookings (name, company_name, email, phone, appt_date, "window", note, lang, folio, profile, zoom_invitees)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, appt_date::text AS appt_date`,
+        [bk.name, bk.company_name || null, bk.email, bk.phone || null, bk.appt_date, bk.window, bk.note || null, bk.lang || null, bk.folio || null,
          JSON.stringify(bk.profile), bk.zoom_invitees || []]);
       return r;
     },
@@ -366,7 +366,7 @@ function jsonFile(dir) {
     createBooking: bk => locked(() => {
       const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), status: "pending",
         zoom_status: "none", zoom_meeting_id: null, zoom_join_url: null, zoom_start_url: null, zoom_created_at: null, zoom_note: null,
-        name: bk.name, email: bk.email, phone: bk.phone || null, appt_date: bk.appt_date, window: bk.window, note: bk.note || null,
+        name: bk.name, company_name: bk.company_name || null, email: bk.email, phone: bk.phone || null, appt_date: bk.appt_date, window: bk.window, note: bk.note || null,
         lang: bk.lang || null, folio: bk.folio || null, profile: bk.profile, zoom_invitees: bk.zoom_invitees || [] };
       d.bookings.push(r); save(d); return r;
     }),

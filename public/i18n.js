@@ -19,7 +19,7 @@ const O={
 const T={
 en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI companies need the real-world experience of companies like yours. Your invoices, quotes, contracts and emails from years of work are worth money. Find out how much in 2 minutes.",cta:"Value my data →",trust:"No commitment. Your information stays private and secure.",soundOff:"Listen to music",soundOn:"Music on",heroChip:"Years of work, turned into value",
  steps:["Your company","Your data","Size & format","Your valuation","Book your appointment","Agreement & signature","Done"],stepOf:(i,n)=>`Step ${i} of ${n}`,
- subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Pick a day and a time window — we call you to go over your valuation.","Two pages. No hidden fine print.","You're in."],
+ subs:["Tell us about your business.","What records do you keep, and for how many years?","Last questions before your valuation.","This is what your data could be worth.","Pick a day and a time window for your Zoom call — we go over your valuation together.","Two pages. No hidden fine print.","You're in."],
  back:"Back",next:"Continue",see:"See my valuation",toContract:"Continue to agreement",submit:"Sign and submit",
  qSector:"Sector",gT:"Construction & trades",gO:"Every other industry",qBiz:"Years in business",qEmp:"Employees",qRec:"Years of records",qTypes:"Record types (choose all you have)",qVol:"Approximate number of records",
  qRev:"Annual revenue",qFmt:"Data format",qFreq:"Does the data keep growing?",qTrack:"How we buy your data",
@@ -60,7 +60,7 @@ en:{tag:"Your data is your legacy",heroT:"Your data is your legacy.",heroP:"AI c
  valNote:"Constants were not changed to force a pass, as the kit instructs. Profile A has no record types named, so it is run with the 3 lowest-weight types and with 3 including email and accounting. Profile D asks for $20–50M revenue; the engine has one band for everything over $20M.",backFunnel:"Back to the seller funnel",stepWord:"Step",resultWord:"Done screen"},
 es:{tag:"Tus datos son patrimonio",heroT:"Tus datos son patrimonio.",heroP:"Las empresas de AI necesitan la experiencia real de empresas como la tuya. Tus facturas, cotizaciones, contratos y correos de años de trabajo valen dinero. Descubre cuánto en 2 minutos.",cta:"Valorar mis datos →",trust:"Sin compromiso. Tu información se mantiene privada y segura.",soundOff:"Escuchar música",soundOn:"Música activada",heroChip:"Años de trabajo, convertidos en valor",
  steps:["Tu empresa","Tus datos","Tamaño y formato","Tu valoración","Reserva tu cita","Contrato y firma","Listo"],stepOf:(i,n)=>`Paso ${i} de ${n}`,
- subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Elige un día y un horario — te llamamos para hablar de tu valoración.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
+ subs:["Cuéntanos de tu negocio.","¿Qué registros guardas y de cuántos años?","Últimas preguntas antes de tu valoración.","Esto es lo que podrían valer tus datos.","Elige un día y un horario para tu llamada por Zoom — hablamos de tu valoración juntos.","Dos páginas. Sin letra pequeña escondida.","Ya estás dentro."],
  back:"Atrás",next:"Continuar",see:"Ver mi valoración",toContract:"Continuar al contrato",submit:"Firmar y enviar",
  qSector:"Sector",gT:"Construcción y oficios",gO:"Todas las demás industrias",qBiz:"Años en el negocio",qEmp:"Empleados",qRec:"Años de registros",qTypes:"Tipos de registro (elige todos los que tengas)",qVol:"Volumen aproximado de registros",
  qRev:"Ingresos anuales",qFmt:"Formato de los datos",qFreq:"¿Los datos siguen creciendo?",qTrack:"Cómo compramos tus datos",
@@ -166,38 +166,42 @@ Object.assign(T.es,{
    until they leave name + email; the lead is saved through /api/contact
    into the same contact_messages the team panel already shows. */
 Object.assign(T.en,{
- gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name and email — we'll send you the next steps there too.",
- gateName:"Your name",gateWa:"WhatsApp (optional)",gateBtn:"See my valuation →",gateNote:"No spam and no commitment. Your information stays private and secure.",
- gateErrName:"Please tell us your name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)"
+ gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name, your company and your email — we'll send you the next steps there too.",
+ gateName:"Your name",gateCompany:"Company name",gateWa:"WhatsApp (optional)",gateBtn:"See my valuation →",gateNote:"No spam and no commitment. Your information stays private and secure.",
+ gateErrName:"Please tell us your name.",gateErrCompany:"Please tell us your company name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)"
 });
 Object.assign(T.es,{
- gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre y tu correo — ahí te enviamos también los siguientes pasos.",
- gateName:"Tu nombre",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
- gateErrName:"Por favor, dinos tu nombre.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)"
+ gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre, tu empresa y tu correo — ahí te enviamos también los siguientes pasos.",
+ gateName:"Tu nombre",gateCompany:"Nombre de la empresa",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
+ gateErrName:"Por favor, dinos tu nombre.",gateErrCompany:"Por favor, dinos el nombre de tu empresa.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)"
 });
 
 /* appointment booking (Nov 25 2026, Miguel's direction): the step right
    after the valuation. Campaign ads point at the screening; the flow
-   ends by booking the call. The Zoom link is NEVER shown here — it
-   follows by email once the team confirms (no fake links). */
+   ends by booking the call. The meeting IS a Zoom video call and the
+   step says so up front (Nov 26 2026). The Zoom join link itself is
+   NEVER shown here — it follows by email once the team creates the
+   meeting from the panel (no fake links). */
 Object.assign(T.en,{
  bkNext:"Book your appointment →",bkContactL:"We'll contact you at:",bkDayL:"Choose a day",bkWinL:"Choose a time window",
+ bkZoomNote:"This appointment is a Zoom video call with our team — pick any day, we meet every day. Your join link will be emailed to you before the appointment.",
  bkMorning:"Morning",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Afternoon",bkAfternoonH:"1:00 – 5:00 PM ET",
  bkNoteL:"Anything we should know? (optional)",bkNotePh:"For example: the best number to reach you, or what you'd like to cover on the call…",
  bkConfirm:"Confirm my appointment",bkSkip:"Continue without an appointment",bkErrPick:"Choose a day and a time window first.",
- bkDoneT:"Your appointment is booked!",bkFor:"Your call:",
- bkDoneP:"We'll contact you to confirm your appointment. Your Zoom link will arrive by email once your appointment is confirmed.",
+ bkDoneT:"Your appointment is booked!",bkFor:"Your Zoom call:",
+ bkDoneP:"Your appointment is a Zoom video call. We'll contact you to confirm it, and your Zoom join link will arrive by email once your appointment is confirmed.",
  bkContinue:"Continue to the agreement",
  tabBookings:"Appointments",bkCols:["Booked","Appointment","Name","Email","WhatsApp","Company profile","Estimate","Status","Zoom","Note"],bkEmpty:"No appointments yet. Bookings appear here the moment a seller reserves a slot.",
  bkZoomBtn:"Create Zoom",bkZoomFor:"Invitees: Gil, Tyler, Miguel"
 });
 Object.assign(T.es,{
  bkNext:"Reserva tu cita →",bkContactL:"Te contactamos en:",bkDayL:"Elige un día",bkWinL:"Elige un horario",
+ bkZoomNote:"Esta cita es una videollamada por Zoom con nuestro equipo — elige cualquier día, nos reunimos todos los días. El enlace para unirte te llega por correo antes de la cita.",
  bkMorning:"Mañana",bkMorningH:"9:00 AM – 12:00 PM ET",bkAfternoon:"Tarde",bkAfternoonH:"1:00 – 5:00 PM ET",
  bkNoteL:"¿Algo que debamos saber? (opcional)",bkNotePh:"Por ejemplo: el mejor número para llamarte, o qué quieres cubrir en la llamada…",
  bkConfirm:"Confirmar mi cita",bkSkip:"Continuar sin cita",bkErrPick:"Primero elige un día y un horario.",
- bkDoneT:"¡Tu cita quedó reservada!",bkFor:"Tu llamada:",
- bkDoneP:"Te contactamos para confirmar tu cita. El enlace de Zoom te llega por correo cuando tu cita esté confirmada.",
+ bkDoneT:"¡Tu cita quedó reservada!",bkFor:"Tu llamada por Zoom:",
+ bkDoneP:"Tu cita es una videollamada por Zoom. Te contactamos para confirmarla, y el enlace de Zoom te llega por correo cuando tu cita esté confirmada.",
  bkContinue:"Continuar al contrato",
  tabBookings:"Citas",bkCols:["Reservada","Cita","Nombre","Correo","WhatsApp","Perfil de la empresa","Estimado","Estado","Zoom","Nota"],bkEmpty:"Sin citas todavía. Las reservas aparecen aquí en cuanto un vendedor aparta su horario.",
  bkZoomBtn:"Crear Zoom",bkZoomFor:"Invitados: Gil, Tyler, Miguel"

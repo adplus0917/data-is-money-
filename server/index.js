@@ -207,13 +207,19 @@ app.post("/api/contact", limiter(20, 10 * 60e3), async (req, res) => {
   catch (e) { console.error(e); res.status(500).json({ error: "could not save" }); }
 });
 
-/* ---------- appointment booking (Nov 25 2026) ----------
-   The step after the valuation: the seller picks one of the next 5 ET
-   business days + a morning/afternoon window. The booking stores the
-   FULL screening profile (answers + the SERVER-computed estimate — the
-   client's numbers are never trusted) so the team panel shows the whole
-   company picture next to the appointment. No email/SMS is sent here:
-   the team confirms from the panel (and creates the Zoom from there). */
+/* ---------- appointment booking (Nov 25 2026; every-day + company
+   name Nov 26 2026) ----------
+   The step after the valuation: the seller picks one of the next 7 ET
+   calendar days (every day, weekends included — Miguel: a Zoom meeting
+   offered every day) + a morning/afternoon window. Company name is
+   required (it comes from the price-gate lead) so the team can follow
+   back up with the company. The booking stores the FULL screening
+   profile (answers + the SERVER-computed estimate — the client's
+   numbers are never trusted) so the team panel shows the whole company
+   picture next to the appointment. The meeting type is Zoom: the team
+   creates it from the panel (one-click Create Zoom → server/zoom.js);
+   the seller's confirmation names Zoom and the join link is emailed
+   once the meeting exists. No email/SMS is sent from this route. */
 app.post("/api/bookings", limiter(20, 10 * 60e3), async (req, res) => {
   const chk = opt.checkBooking(req.body || {});
   if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
@@ -222,13 +228,13 @@ app.post("/api/bookings", limiter(20, 10 * 60e3), async (req, res) => {
     const v = valueDataset(opt.toEngineInput(bk.answers));
     const profile = { ...bk.answers, estimate_low: v.low, estimate_high: v.high, estimate_point: v.point, tier: v.tier, score: v.score, engine_version: ENGINE_VERSION };
     const row = await db.createBooking({
-      name: bk.name, email: bk.email, phone: bk.phone, note: bk.note,
+      name: bk.name, company_name: bk.company_name, email: bk.email, phone: bk.phone, note: bk.note,
       appt_date: bk.appt_date, window: bk.window,
       lang: (req.body || {}).lang === "es" ? "es" : "en",
       profile, zoom_invitees: opt.ZOOM_INVITEES,
     });
-    log({ actor: "visitor:" + row.email, action: "booking.created", detail: { booking: row.id, date: row.appt_date, window: row.window, estimate: [v.low, v.high], ip: req.ip } });
-    res.status(201).json({ ok: true, id: row.id, date: row.appt_date, window: row.window });
+    log({ actor: "visitor:" + row.email, action: "booking.created", detail: { booking: row.id, company: row.company_name, date: row.appt_date, window: row.window, estimate: [v.low, v.high], ip: req.ip } });
+    res.status(201).json({ ok: true, id: row.id, date: row.appt_date, window: row.window, meeting_type: "zoom", zoom_status: row.zoom_status });
   } catch (e) { console.error("booking failed", e); res.status(500).json({ error: "could not save, please try again" }); }
 });
 // The offered days, so the client and the team see the same list the

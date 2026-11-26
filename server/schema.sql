@@ -391,6 +391,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   id              bigserial PRIMARY KEY,
   created_at      timestamptz NOT NULL DEFAULT now(),
   name            text NOT NULL,               -- from the price-gate lead
+  company_name    text,                        -- from the price-gate lead (Nov 26 2026: required at capture)
   email           text NOT NULL,
   phone           text,                        -- WhatsApp, optional
   appt_date       date NOT NULL,               -- the chosen day (America/New_York)
@@ -410,6 +411,8 @@ CREATE TABLE IF NOT EXISTS bookings (
 );
 CREATE INDEX IF NOT EXISTS bookings_created_idx ON bookings (created_at DESC);
 CREATE INDEX IF NOT EXISTS bookings_appt_idx ON bookings (appt_date, "window");
+-- Company name on the booking (Nov 26 2026) for databases created before it.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS company_name text;
 
 CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
 BEGIN

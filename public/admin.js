@@ -85,7 +85,7 @@ function panelHTML() {
     body = brows.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.bkCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${brows.map(bk => { const p = bk.profile || {}; return `<tr>
       <td style="white-space:nowrap">${dt(bk.created_at)}</td>
       <td style="white-space:nowrap"><b>${esc(bkDay(bk.appt_date))}</b><br>${esc(bk.window === "morning" ? l.bkMorning : l.bkAfternoon)} ${esc(bk.window === "morning" ? l.bkMorningH : l.bkAfternoonH)}</td>
-      <td>${esc(bk.name)}${bk.folio ? `<br><span class="sub">${esc(bk.folio)}</span>` : ""}</td>
+      <td>${esc(bk.name)}${bk.company_name ? `<br><span class="sub">${esc(bk.company_name)}</span>` : ""}${bk.folio ? `<br><span class="sub">${esc(bk.folio)}</span>` : ""}</td>
       <td>${esc(bk.email)}</td><td>${esc(bk.phone || "—")}</td>
       <td>${esc(lab("sector", p.sector))} · ${esc(lab("emp", p.employees))} · ${esc(lab("years", p.record_years))} · ${esc(lab("rev", p.revenue_band))}<br><span class="sub">${esc(lab("track", p.track || "compra_directa"))}</span></td>
       <td class="n">${p.estimate_low != null ? esc(usd(p.estimate_low) + " – " + usd(p.estimate_high)) : "—"}</td>

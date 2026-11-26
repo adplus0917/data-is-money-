@@ -54,8 +54,12 @@ S.contact = S.contact || { name: "", email: "", message: "", sent: false, err: "
 S.chat = S.chat || { open: false, sessionId: null, msgs: [], emailOpen: false, email: "", emailMsg: "", emailSent: false, emailErr: "", busy: false };
 /* price gate (Nov 25 2026): the step-4 estimate stays hidden until the
    visitor leaves name + email; the lead is saved via /api/contact into
-   the existing contact_messages capture (team panel → Messages). */
-S.gate = S.gate || { name: "", email: "", phone: "", done: false, err: "", busy: false };
+   the existing contact_messages capture (team panel → Messages).
+   Company name joined the gate Nov 26 2026 (Miguel's direction): the
+   lead must carry the company so the team can follow back up. Sessions
+   saved before then have no company field — default it in. */
+S.gate = S.gate || { name: "", company: "", email: "", phone: "", done: false, err: "", busy: false };
+if (S.gate.company === undefined) S.gate.company = "";
 /* appointment booking (Nov 25 2026): the step right after the valuation.
    Contact comes from the gate (no re-typing); the server stores the
    booking with the full screening profile attached. */
@@ -139,9 +143,10 @@ function stepHTML() {
 }
 
 /* Price gate: shown in place of the step-4 estimate until the visitor's
-   name + email are saved. The lead goes through the EXISTING /api/contact
-   capture (contact_messages, team panel → Messages) with the funnel
-   answers attached — no parallel store, no new table. */
+   name + company name + email are saved. The lead goes through the
+   EXISTING /api/contact capture (contact_messages, team panel →
+   Messages) with the funnel answers attached — no parallel store, no
+   new table. */
 function gateHTML() {
   const l = L(), g = S.gate;
   const emErr = g.email.trim() ? emailErrorClient(g.email) : null;
@@ -149,6 +154,7 @@ function gateHTML() {
   return `<div class="kick">${l.stepOf(4, l.steps.length)}</div><h2>${l.gateT}</h2><p class="sub">${l.gateS}</p>
    <div class="fields">
     <div class="f"><label for="g_name">${l.gateName}</label><input id="g_name" data-g="name" type="text" autocomplete="name" maxlength="160" value="${esc(g.name)}"></div>
+    <div class="f"><label for="g_company">${l.gateCompany}</label><input id="g_company" data-g="company" type="text" autocomplete="organization" maxlength="160" value="${esc(g.company)}"></div>
     <div class="f"><label for="g_email">${l.fEmail}</label><input id="g_email" data-g="email" type="email" autocomplete="email" maxlength="200" value="${esc(g.email)}"><div class="emsg" role="alert">${esc(em)}</div></div>
     <div class="f"><label for="g_phone">${l.gateWa}</label><input id="g_phone" data-g="phone" type="tel" autocomplete="tel" maxlength="40" value="${esc(g.phone)}"></div>
    </div>
@@ -160,11 +166,13 @@ async function gateSubmit() {
   const l = L(), g = S.gate, a = S.a;
   if (g.busy) return;
   if (!g.name.trim()) { g.err = l.gateErrName; save(); render(); return; }
+  if (!g.company.trim()) { g.err = l.gateErrCompany; save(); render(); return; }
   const emErr = emailErrorClient(g.email);
   if (emErr) { g.err = emErr === "tld" ? l.errEmailTld : l.errEmailFmt; save(); render(); return; }
   g.busy = true; g.err = ""; save(); render();
   const lines = [l.gateLead,
     `${l.gateName}: ${g.name.trim()}`,
+    `${l.gateCompany}: ${g.company.trim()}`,
     `${l.fEmail}: ${g.email.trim()}`,
     g.phone.trim() ? `${l.gateWa}: ${g.phone.trim()}` : null,
     `${l.qSector}: ${lab("sector", a.sector)}`,
@@ -177,6 +185,7 @@ async function gateSubmit() {
     await API.contact(g.name.trim(), g.email.trim(), lines, a.track);
     g.done = true; g.busy = false;
     if (!a.owner_name) a.owner_name = g.name.trim();
+    if (!a.company_name) a.company_name = g.company.trim();
     if (!a.email) a.email = g.email.trim();
     if (!a.phone && g.phone.trim()) a.phone = g.phone.trim();
     save(); render(); $("start").scrollIntoView({ block: "start" });
@@ -384,15 +393,19 @@ function afterPick() {
 /* ---------- actions ---------- */
 /* ----- appointment booking (step 5 of 7, right after the valuation) -----
    Same algorithm as the server (server/options.js bookingDays): the next
-   5 America/New_York business days, morning/afternoon windows. The server
-   re-derives the list and validates, so this is display + convenience. */
+   7 America/New_York calendar days — EVERY day, weekends included
+   (Nov 26 2026, Miguel: a Zoom meeting offered every day) — with
+   morning/afternoon windows. The server re-derives the list and
+   validates, so this is display + convenience. If the server is ever
+   switched back to business-days-only (BOOKING_EVERY_DAY=false), a
+   weekend pick here is rejected with the server's message and the
+   stale-pick cleanup below drops it. */
 function bookingDaysClient() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map(x => [x.type, x.value]));
   const cur = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)), out = [];
-  while (out.length < 5) {
+  while (out.length < 7) {
     cur.setUTCDate(cur.getUTCDate() + 1);
-    const wd = cur.getUTCDay();
-    if (wd >= 1 && wd <= 5) out.push({ date: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}-${String(cur.getUTCDate()).padStart(2, "0")}`, weekday: wd });
+    out.push({ date: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}-${String(cur.getUTCDate()).padStart(2, "0")}`, weekday: cur.getUTCDay() });
   }
   return out;
 }
@@ -411,7 +424,8 @@ function bookingHTML() {
   if (bk.date && !days.some(d => d.date === bk.date)) bk.date = ""; // the offered list rolled past a stale pick
   const dayBtns = days.map(d => `<button type="button" class="opt" data-bk="date" data-v="${d.date}" aria-pressed="${bk.date === d.date}">${esc(bkDayLabel(d.date))}</button>`).join("");
   const winBtns = ["morning", "afternoon"].map(w => `<button type="button" class="opt" data-bk="window" data-v="${w}" aria-pressed="${bk.window === w}">${esc(w === "morning" ? l.bkMorning : l.bkAfternoon)}<small>${esc(w === "morning" ? l.bkMorningH : l.bkAfternoonH)}</small></button>`).join("");
-  return h + `<p class="intro">${l.bkContactL} <b>${esc(g.name)}</b> · ${esc(g.email)}${g.phone ? " · " + esc(g.phone) : ""}</p>
+  return h + `<p class="intro">${l.bkContactL} <b>${esc(g.name)}</b>${g.company ? " · " + esc(g.company) : ""} · ${esc(g.email)}${g.phone ? " · " + esc(g.phone) : ""}</p>
+   <p class="disc">${l.bkZoomNote}</p>
    <span class="q">${l.bkDayL}</span><div class="opts wide">${dayBtns}</div>
    <span class="q">${l.bkWinL}</span><div class="opts wide">${winBtns}</div>
    <div class="f" style="margin-top:16px"><label for="bk_note">${l.bkNoteL}</label><textarea id="bk_note" data-bkn maxlength="500" placeholder="${esc(l.bkNotePh)}" style="width:100%;min-height:84px;font-size:16px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--field)">${esc(bk.note)}</textarea></div>
@@ -426,7 +440,7 @@ async function bookingSubmit() {
   bk.busy = true; bk.err = ""; save(); render();
   const answers = { sector: a.sector, years_in_business: a.years_in_business, employees: a.employees, record_years: a.record_years, data_types: a.data_types, record_volume: a.record_volume, revenue_band: a.revenue_band, format: a.format, frequency: a.frequency, track: a.track };
   try {
-    const r = await API.book({ name: g.name.trim(), email: g.email.trim(), phone: g.phone.trim(), date: bk.date, window: bk.window, note: bk.note.trim(), answers, lang: S.lang });
+    const r = await API.book({ name: g.name.trim(), company_name: g.company.trim(), email: g.email.trim(), phone: g.phone.trim(), date: bk.date, window: bk.window, note: bk.note.trim(), answers, lang: S.lang });
     bk.done = true; bk.id = r.id; bk.busy = false;
     save(); render(); $("start").scrollIntoView({ block: "start" });
   } catch (e) {
