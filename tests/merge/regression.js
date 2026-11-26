@@ -98,7 +98,7 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   ok(["inicio", "como", "valua", "seguridad", "preguntas", "contacto"].every(v => i18n.includes(v + ":")), "six nav windows defined (inicio/cómo/valúa/seguridad/preguntas/contacto)");
   ok(/data-nav/.test(app) && /S\.view = b\.dataset\.nav/.test(app), "nav tabs switch the visible view in app.js");
   ok(/data-view="seguridad"/.test(html) && /data-view="preguntas"/.test(html) && /data-view="contacto"/.test(html), "security, FAQ and contact sections exist as switchable views");
-  ok(/wa\.me\/18136144279/.test(app), "chat/contact WhatsApp escape points at wa.me/18136144279");
+  ok(/wa\.me\/18136183851/.test(app), "chat/contact WhatsApp escape points at wa.me/18136183851");
   ok(app.includes("/api/chat") && app.includes("/api/contact") && app.includes('step: "general"'), "funnel calls /api/chat, /api/contact and general feedback");
   ok(/nav:\{inicio:/.test(i18n) && /nav:\{inicio:"Home"/.test(i18n), "nav labels exist in both languages");
   ok(/chatWa:"Continue on WhatsApp"/.test(i18n) && /chatWa:"Seguir por WhatsApp"/.test(i18n), "chat escape buttons labeled in both languages");

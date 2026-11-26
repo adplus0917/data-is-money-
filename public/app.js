@@ -245,7 +245,7 @@ function marketHTML() {
 }
 
 /* ---------- soft launch: nav windows, security/FAQ/contact, chat, feedback ---------- */
-const waLink = l => "https://wa.me/18136144279?text=" + encodeURIComponent(l.conWaMsg);
+const waLink = l => "https://wa.me/18136183851?text=" + encodeURIComponent(l.conWaMsg);
 function securityHTML() {
   const l = L();
   return `<h2>${l.secT}</h2><p class="sub">${l.secS}</p><div class="hg">${l.sec.map(([t, p]) => `<div><h3 style="font-size:17px">${t}</h3><p>${p}</p></div>`).join("")}</div>`;
