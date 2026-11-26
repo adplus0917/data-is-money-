@@ -138,6 +138,20 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   ok(opt.TRACKS.length === 1 && opt.TRACKS[0] === "compra_directa", "server accepts exactly ONE track value: compra_directa");
 }
 
+/* ---------- 7. Mobile / keyboard defects (Tyler acceptance, Nov 25 2026) ----------
+   The Spanish valuation ran offscreen at mobile width; the chat widget
+   covered the signature "Use" button and the funnel Continue button; and
+   Tab escaped the open signature dialog to fields hidden behind it. */
+{
+  const app = fs.readFileSync(path.join(ROOT, "public/app.js"), "utf8");
+  const css = fs.readFileSync(path.join(ROOT, "public/styles.css"), "utf8");
+  ok(/class="amt"/.test(app) && /\.est \.num\{[^}]*flex-wrap:wrap/.test(css) && !/\.est \.num\{[^}]*white-space:nowrap/.test(css), "valuation range renders as wrap-safe amount spans \u2014 no nowrap overflow at mobile width");
+  ok(/if \(S\.sigOpen \|\| S\.fbOpen\) return ""/.test(app), "chat widget is not rendered while a modal dialog is open (cannot cover its buttons)");
+  ok(/\.sigmodal\{[^}]*z-index:90/.test(css), "modal layer (z-index 90) sits above the chat widget (z-index 70)");
+  ok(/\.chatbtn \.chat-tx\{display:none\}/.test(css) && /\.wrap\{padding-bottom:110px\}/.test(css), "mobile chat collapses to a round bubble and the funnel gains bottom clearance");
+  ok(/function focusIntoDialog/.test(app) && /addEventListener\("keydown"/.test(app) && /e\.key === "Escape"/.test(app) && /function restoreFocus/.test(app) && /function closeSig/.test(app), "modal focus management present: focus-in on open, Tab trap, Escape closes, focus restored to opener");
+}
+
 /* ---------- engine integrity + worked example ---------- */
 {
   const { valueDataset } = require(path.join(ROOT, "server/engine.js"));

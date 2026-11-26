@@ -54,7 +54,9 @@ h2{font-size:clamp(26px,4vw,32px);font-weight:800;margin-bottom:6px}
 .err{color:var(--bad);font-size:14px;margin-top:12px;min-height:1.2em}
 .est{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:24px;text-align:center;margin-top:18px}
 .est .lbl{color:var(--mute);font-size:14px}
-.est .num{font-size:clamp(34px,8vw,56px);font-weight:800;color:var(--gold2);white-space:nowrap;margin-top:4px}
+.est .num{font-size:clamp(30px,8vw,56px);font-weight:800;color:var(--gold2);margin-top:4px;display:flex;flex-wrap:wrap;justify-content:center;align-items:baseline}
+.est .num .amt{white-space:nowrap}
+.est .num .dash{color:var(--mute);padding:0 .18em}
 .tier{display:inline-block;margin-top:10px;padding:4px 14px;border-radius:999px;border:1px solid var(--gold);color:var(--gold2);font-weight:600}
 .score{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;margin:20px 0 4px;text-align:left}
 .score .m{height:10px;border-radius:5px;background:var(--field);overflow:hidden}
@@ -75,7 +77,7 @@ h2{font-size:clamp(26px,4vw,32px);font-weight:800;margin-bottom:6px}
 .ck{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
 .ck input{width:22px;height:22px;flex:none;margin-top:2px;accent-color:var(--gold)}
 .sign{font-family:"Brush Script MT","Segoe Script",cursive;font-size:24px}
-.folio{font:800 clamp(30px,7vw,44px) Archivo,sans-serif;color:var(--gold2);letter-spacing:.04em;text-align:center;padding:18px;border:1px dashed var(--gold);border-radius:14px;margin:16px 0;white-space:nowrap}
+.folio{font:800 clamp(24px,7vw,44px) Archivo,sans-serif;color:var(--gold2);letter-spacing:.04em;text-align:center;padding:18px;border:1px dashed var(--gold);border-radius:14px;margin:16px 0;white-space:nowrap}
 .drop{display:block;position:relative;border:2px dashed var(--line);border-radius:14px;padding:24px;text-align:center;cursor:pointer;margin-top:10px}
 .drop.over{border-color:var(--gold);background:var(--bg2)}
 .drop input{position:absolute;opacity:0;width:1px;height:1px}
@@ -140,7 +142,7 @@ td select{min-height:40px;border-radius:8px;background:var(--field);border:1px s
 .faqitem{border-bottom:1px solid var(--line);padding:14px 0}
 .faqitem p{margin:6px 0 0;color:#d4ddeb}
 .okmsg{color:var(--ok);font-size:15px;margin-top:10px}
-.chatbtn{position:fixed;right:18px;bottom:18px;z-index:70;background:var(--gold);color:#10203c;border:0;border-radius:999px;min-height:54px;padding:0 22px;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.chatbtn{position:fixed;right:18px;bottom:18px;z-index:70;background:var(--gold);color:#10203c;border:0;border-radius:999px;min-height:54px;padding:0 22px;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.45);display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .chatpanel{position:fixed;right:18px;bottom:18px;z-index:70;width:min(380px,calc(100vw - 24px));max-height:min(640px,calc(100vh - 36px));display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--gold);border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.5);overflow:hidden}
 .chathead{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
 .chathead b{font-family:Archivo,sans-serif}
@@ -156,7 +158,15 @@ td select{min-height:40px;border-radius:8px;background:var(--field);border:1px s
 .chatemail{padding:0 12px 14px}
 .chatemail input,.chatemail textarea{width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--line);border-radius:10px;background:var(--field);margin-top:8px}
 .chatemail textarea{min-height:76px}
-@media(max-width:600px){.chatpanel{right:12px;bottom:12px}.chatbtn{right:12px;bottom:12px}}
+@media(max-width:600px){.chatpanel{right:12px;bottom:12px}
+/* Mobile: the chat collapses to a round bubble (label hidden, aria-label
+   keeps the name) and the funnel gets bottom clearance, so the bubble can
+   always be scrolled clear of the Continue / Sign buttons — it never
+   covers a primary action (Pascal: "the chat box blocks Continue"). */
+.chatbtn{right:12px;bottom:12px;width:54px;height:54px;min-height:54px;padding:0;border-radius:50%;display:grid;place-items:center}
+.chatbtn .chat-tx{display:none}
+.chatbtn .chat-ic{font-size:22px;line-height:1}
+.wrap{padding-bottom:110px}}
 
 /* --- signature window + email message (merge fixes) --- */
 .emsg{color:var(--bad);font-size:14px;margin-top:6px;min-height:0}
@@ -173,7 +183,10 @@ td select{min-height:40px;border-radius:8px;background:var(--field);border:1px s
 .sig-style-sacramento{font-family:"Sacramento","Brush Script MT",cursive}
 .sig-style-kalam{font-family:"Kalam","Comic Sans MS",cursive}
 .sigpreview{font-size:34px;line-height:1.2;color:var(--gold2)}
-.sigmodal{position:fixed;inset:0;z-index:60;background:rgba(4,10,22,.66);display:flex;align-items:flex-end;justify-content:center}
+/* z-index 90: the modal layer sits ABOVE the chat widget (z 70), and
+   app.js does not render the chat at all while a dialog is open — a
+   dialog's action buttons can never be covered (Tyler + Pascal, Nov 25). */
+.sigmodal{position:fixed;inset:0;z-index:90;background:rgba(4,10,22,.66);display:flex;align-items:flex-end;justify-content:center}
 .sigsheet{background:var(--bg2);border:1px solid var(--line);border-radius:16px 16px 0 0;padding:20px;width:min(560px,100%);max-height:92vh;overflow:auto}
 @media(min-width:640px){.sigmodal{align-items:center}.sigsheet{border-radius:16px}}
 .sigtabs{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:14px 0}

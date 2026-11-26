@@ -115,7 +115,7 @@ function stepHTML() {
   if (i === 3) {
     const v = valueDataset(engineInput(a)), b = v.breakdown;
     const sub = { base: lab("rev", a.revenue_band), fYears: lab("years", a.record_years), fEmployees: lab("emp", a.employees), fTypes: l.typesN(a.data_types.length), fFormat: lab("fmt", a.format), fFrequency: lab("freq", a.frequency) };
-    return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num">${usd(v.low)} – ${usd(v.high)}</div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
+    return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num"><span class="amt">${usd(v.low)}</span><span class="dash">–</span><span class="amt">${usd(v.high)}</span></div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
      <div class="score"><span>${l.scoreL}</span><div class="m"><i style="width:${v.score}%"></i></div><b>${v.score}/100</b></div></div>
      <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div></div>
      <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.bkNext) + fbBox(4);
@@ -261,7 +261,12 @@ function fbModalHTML() {
 }
 function chatHTML() {
   const l = L(), c = S.chat;
-  if (!c.open) return `<button type="button" class="chatbtn" id="chatOpen">💬 ${l.chatOpen}</button>`;
+  /* While a modal dialog is open (signature, general feedback), the chat
+     widget is not rendered at all: a fixed chat button/panel must never
+     sit on top of a dialog or cover its action buttons (Tyler + Pascal,
+     Nov 25 2026). It comes back when the dialog closes. */
+  if (S.sigOpen || S.fbOpen) return "";
+  if (!c.open) return `<button type="button" class="chatbtn" id="chatOpen"><span class="chat-ic" aria-hidden="true">💬</span><span class="chat-tx">${l.chatOpen}</span></button>`;
   const msgs = c.msgs.map(m => `<div class="chatmsg ${m.role === "visitor" ? "me" : "bot"}">${esc(m.text)}</div>`).join("");
   const emailForm = c.emailOpen ? (c.emailSent ? `<p class="okmsg" role="status">${l.chatSent}</p>` : `<form data-chatemail class="chatemail" novalidate>
       <p style="margin:0 0 8px;font-size:14px">${l.chatEmailT}</p>
@@ -302,6 +307,37 @@ function render() {
   if (cv && S.a.signature_method === "drawn" && S.a.signature_data) { const img = new Image(); img.onload = () => cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); img.src = S.a.signature_data; }
   save();
 }
+
+/* ---------- modal focus management (Nov 25 2026, Tyler acceptance) ----------
+   Both dialogs (signature, general feedback) follow the APG modal pattern:
+   focus moves inside on open, Tab / Shift+Tab cycle within the dialog,
+   Escape closes, and focus returns to the element that opened it. Before
+   this, Tab escaped to fields hidden behind the open signature dialog. */
+const FOCUSABLE_SEL = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const dialogEl = () => document.querySelector(".sigsheet");
+const dialogFocusables = d => [...d.querySelectorAll(FOCUSABLE_SEL)].filter(el => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden");
+function focusIntoDialog() {
+  const d = dialogEl(); if (!d) return;
+  const inp = d.querySelector("#sigName,#sigNameDraw,#fbGeneral");
+  const f = inp || dialogFocusables(d)[0];
+  if (f) f.focus();
+}
+function restoreFocus() {
+  const id = S._retFocus; S._retFocus = null;
+  if (id) { const el = document.getElementById(id); if (el) { el.focus(); return; } }
+}
+function closeSig() { S.sigOpen = false; save(); render(); restoreFocus(); }
+function closeFb() { S.fbOpen = false; save(); render(); restoreFocus(); }
+document.addEventListener("keydown", e => {
+  const d = dialogEl(); if (!d) return;
+  if (e.key === "Escape") { e.preventDefault(); if (S.sigOpen) closeSig(); else if (S.fbOpen) closeFb(); return; }
+  if (e.key !== "Tab") return;
+  const f = dialogFocusables(d); if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!d.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 
 /* ---------- auto-advance (Nov 25 2026, Miguel's direction) ----------
    Picking answers moves the funnel forward on its own: the next
@@ -457,13 +493,13 @@ document.addEventListener("click", e => {
   if (e.target.closest("#ctaBtn")) { e.preventDefault(); S.view = "valua"; save(); render(); $("start").scrollIntoView({ block: "start", behavior: "smooth" }); return; }
   const b = e.target.closest("button"); if (!b) return;
   if (b.dataset.nav) { S.view = b.dataset.nav; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
-  if (b.id === "fbTop") { S.fbOpen = true; render(); const t = $("fbGeneral"); if (t) t.focus(); return; }
-  if (b.id === "fbClose") { S.fbOpen = false; render(); return; }
+  if (b.id === "fbTop") { S._retFocus = "fbTop"; S.fbOpen = true; render(); focusIntoDialog(); return; }
+  if (b.id === "fbClose") { closeFb(); return; }
   if (b.id === "chatOpen") { S.chat.open = true; if (!S.chat.msgs.length) S.chat.msgs.push({ role: "bot", text: L().chatHello }); save(); render(); const i = $("chatIn"); if (i) i.focus(); return; }
   if (b.id === "chatClose") { S.chat.open = false; save(); render(); return; }
   if (b.id === "chatEmailToggle") { S.chat.emailOpen = !S.chat.emailOpen; render(); return; }
-  if (b.id === "sigBox") { S.sigOpen = true; S.sigTab = S.a.signature_method || "typed"; S.sigStyle = S.a.signature_style || "great"; S.sigDrawn = !!S.a.signature_data; render(); return; }
-  if (b.id === "sigCancel") { S.sigOpen = false; render(); return; }
+  if (b.id === "sigBox") { S._retFocus = "sigBox"; S.sigOpen = true; S.sigTab = S.a.signature_method || "typed"; S.sigStyle = S.a.signature_style || "great"; S.sigDrawn = !!S.a.signature_data; render(); focusIntoDialog(); return; }
+  if (b.id === "sigCancel") { closeSig(); return; }
   if (b.id === "sigTabType" || b.id === "sigTabDraw") { const ne = $("sigName") || $("sigNameDraw"); if (ne && ne.value.trim()) S.a.signature_name = ne.value; S.sigTab = b.id === "sigTabDraw" ? "drawn" : "typed"; render(); return; }
   if (b.dataset.sigstyle) { const ne = $("sigName"); if (ne) S.a.signature_name = ne.value; S.sigStyle = b.dataset.sigstyle; render(); return; }
   if (b.id === "sigClear") { const cv = $("sigCanvas"); if (cv) cv.getContext("2d").clearRect(0, 0, cv.width, cv.height); S.sigDrawn = false; return; }
@@ -484,7 +520,7 @@ document.addEventListener("click", e => {
       S.a.signature_style = S.sigStyle || "great";
       S.a.signature_data = "";
     }
-    S.a.signature_done = true; S.sigOpen = false; save(); render(); return;
+    S.a.signature_done = true; S.sigOpen = false; save(); render(); restoreFocus(); return;
   }
   if (b.dataset.lang) { S.lang = b.dataset.lang; LS.set("dp.lang", S.lang); render(); return; }
   if (b.dataset.k) { S.a[b.dataset.k] = b.dataset.v; render(); afterPick(); return; }
