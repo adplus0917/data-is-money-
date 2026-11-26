@@ -1,12 +1,13 @@
 // ============================================================
 // DATA Patrimonio — live chat assistant (POST /api/chat)
 // Answers ONLY from a curated knowledge base built from the site's own
-// approved copy (public/i18n.js: how-it-works, the two tracks, the quality
-// gate, storage/insurance, the valuation disclaimer, the agreement draft).
+// approved copy (public/i18n.js: how-it-works, the purchase model, the
+// quality gate, storage/insurance, the valuation disclaimer, the
+// agreement draft).
 // Anything outside the base gets a plain "I don't know" + a hand-off to
 // WhatsApp / email. It never invents numbers, terms or promises:
 // valuations are preliminary, there is no upfront payment and no
-// guaranteed sale on the license track, and no deals have been closed yet.
+// guaranteed sale, and no deals have been closed yet.
 // ============================================================
 
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -30,14 +31,14 @@ const KB = [
   {
     topic: "licencia",
     keys: ["licencia", "license", "licence", "65%", "65 %", "sesenta y cinco"],
-    en: "License: you stay the owner of your data. We license it to buyers on a non-exclusive basis, so the same data may be licensed to several buyers. You receive 65% and the Company 35% of each license sale, paid after the buyer approves your data. There is no upfront payment and no guaranteed sales.",
-    es: "Licencia: tú sigues siendo el dueño de tus datos. Los licenciamos a compradores de forma no exclusiva: los mismos datos pueden licenciarse a varios compradores. Tú recibes el 65% y la Compañía el 35% de cada venta de licencia, pagado después de que el comprador apruebe tus datos. Sin pago por adelantado ni ventas garantizadas.",
+    en: "There is no license track. The only way to sell is Direct purchase: we buy a copy of your data outright, with exclusivity, and you always keep your own copy. Payment is one-time — there is no revenue share and no percentage of future sales — and it is made only after your sample and full delivery pass verification against the signed manifest and the delivery is approved. There is no upfront payment.",
+    es: "No existe la modalidad de licencia. La única forma de vender es la Compra directa: compramos una copia de tus datos de forma directa, con exclusividad, y tú siempre conservas tu propia copia. El pago es único — no hay reparto de ingresos ni porcentaje de ventas futuras — y se hace solo cuando tu muestra y la entrega completa pasan la verificación contra el manifiesto firmado y la entrega es aprobada. Sin pago por adelantado.",
   },
   {
     topic: "payment",
     keys: ["cuando pagan", "cuando me pagan", "cuando recibo", "when do i get paid", "when do you pay", "how do i get paid", "como me pagan", "pago por adelantado", "upfront"],
-    en: "Payment timing: with Direct purchase, payment is released when your delivery is verified and approved. With a License, you are paid after each buyer approves your data. There is never an upfront payment before the quality gate is complete.",
-    es: "Tiempos de pago: con Compra directa, el pago se libera cuando tu entrega está verificada y aprobada. Con Licencia, te pagamos después de que cada comprador apruebe tus datos. Nunca hay pago por adelantado antes de completar la puerta de calidad.",
+    en: "Payment timing: payment is released when your delivery is verified and approved — your sample and full delivery are checked against the signed manifest first. There is never an upfront payment before the quality gate is complete.",
+    es: "Tiempos de pago: el pago se libera cuando tu entrega está verificada y aprobada: primero se revisan tu muestra y la entrega completa contra el manifiesto firmado. Nunca hay pago por adelantado antes de completar la puerta de calidad.",
   },
   {
     topic: "valuation",
@@ -90,8 +91,8 @@ const KB = [
   {
     topic: "greeting",
     keys: ["hola", "buenas", "buenos dias", "buenas tardes", "hello", "hi", "hey", "good morning", "good afternoon"],
-    en: "Hello! I can explain how DATA Patrimonio works: the two ways to sell (Direct purchase or License), how the valuation and the quality gate work, and how your data is stored. What would you like to know?",
-    es: "¡Hola! Puedo explicarte cómo funciona DATA Patrimonio: las dos formas de vender (Compra directa o Licencia), cómo funciona la valoración y la puerta de calidad, y cómo se guardan tus datos. ¿Qué te gustaría saber?",
+    en: "Hello! I can explain how DATA Patrimonio works: how we buy your data (Direct purchase with exclusivity), how the valuation and the quality gate work, and how your data is stored. What would you like to know?",
+    es: "¡Hola! Puedo explicarte cómo funciona DATA Patrimonio: cómo compramos tus datos (Compra directa con exclusividad), cómo funciona la valoración y la puerta de calidad, y cómo se guardan tus datos. ¿Qué te gustaría saber?",
   },
 ];
 

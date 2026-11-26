@@ -109,7 +109,14 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   const buy = answerChat("¿Cómo funciona la compra directa?", "es");
   ok(buy.inScope && buy.topic === "compra_directa" && /Compra directa/.test(buy.text), "chat unit: ES direct-purchase question answered in scope");
   const lic = answerChat("How does the license work and when do I get paid?", "en");
-  ok(lic.inScope && lic.topic === "licencia" && /65%/.test(lic.text), "chat unit: EN license question answered with the 65% term");
+  ok(lic.inScope && lic.topic === "licencia" && /no license track/i.test(lic.text) && /buy a copy of your data outright/i.test(lic.text) && !/65%/.test(lic.text), "chat unit: EN license question answered buy-only (no license track, no 65% split)");
+  const licEs = answerChat("¿Cómo funciona la licencia?", "es");
+  ok(licEs.inScope && licEs.topic === "licencia" && /No existe la modalidad de licencia/.test(licEs.text) && /Compra directa/.test(licEs.text) && !/65%/.test(licEs.text), "chat unit: ES license question answered buy-only (no license track, no 65% split)");
+  const pay = answerChat("When do I get paid?", "en");
+  ok(pay.inScope && pay.topic === "payment" && !/license/i.test(pay.text), "chat unit: payment answer names no license track");
+  const greet = answerChat("Hello", "en");
+  ok(greet.topic === "greeting" && !/two ways to sell/i.test(greet.text) && /buy your data/i.test(greet.text), "chat unit: greeting presents the purchase only (no two-ways-to-sell)");
+  ok(!/two ways to sell/.test(i18n) && !/dos formas de vender/.test(i18n), "chat greeting (chatHello EN+ES) presents no two-ways-to-sell choice");
   const val = answerChat("How much is my data worth?", "en");
   ok(val.inScope && /preliminary estimate/i.test(val.text), "chat unit: valuation answer carries the preliminary-estimate disclaimer");
   const oos = answerChat("What's the weather in Tampa tomorrow?", "en");
@@ -136,6 +143,9 @@ const auth = require(path.join(ROOT, "server/auth.js"));
   ok(!ag.includes('"licencia"'), "the agreement text (AG) contains no license track — purchase only");
   ok(/\.dealcard\{/.test(css), "dealcard statement styles present in styles.css");
   ok(opt.TRACKS.length === 1 && opt.TRACKS[0] === "compra_directa", "server accepts exactly ONE track value: compra_directa");
+  ok(/track:\[\["compra_directa"/.test(i18n) && !/\["licencia","License","Licencia"\]/.test(i18n), "funnel options (O.track) offer exactly ONE path — no dead licencia entry remains");
+  ok(/Your purchase price is agreed in writing before intake, and paid once your delivery is verified and approved\./.test(i18n) && !/Our 65% to the owner/.test(i18n), "EN advertised-vs-documented copy: agreed purchase price in writing before intake, paid after verification + approval — no 65% owner split");
+  ok(/Tu precio de compra se acuerda por escrito antes de recibir los datos, y se paga cuando tu entrega está verificada y aprobada\./.test(i18n) && !/Nuestro 65% para el dueño/.test(i18n), "ES advertised-vs-documented copy: agreed purchase price in writing before intake, paid after verification + approval — no 65% owner split");
 }
 
 /* ---------- 7. Mobile / keyboard defects (Tyler acceptance, Nov 25 2026) ----------
