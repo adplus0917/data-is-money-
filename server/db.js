@@ -116,7 +116,7 @@ function postgres(url) {
       return r;
     },
     async listBookings() {
-      const { rows } = await pool.query(`SELECT *, appt_date::text AS appt_date FROM bookings ORDER BY appt_date, created_at DESC LIMIT 5000`);
+      const { rows } = await pool.query(`SELECT *, appt_date::text AS appt_date FROM bookings ORDER BY bookings.appt_date, bookings.created_at DESC LIMIT 5000`);
       return rows;
     },
     async getBooking(id) {
