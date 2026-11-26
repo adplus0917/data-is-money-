@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{STREAM_LABEL}} — Uploads</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f1c2e; color: #f2f5f8; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  p.sub { color: #b9c7d6; margin: 0 0 20px; }
+  label { display: block; font-size: 14px; margin: 14px 0 6px; color: #b9c7d6; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 12px; border-radius: 8px; border: 1px solid #35506e; background: #16283d; color: #fff; font-size: 16px; }
+  #drop { border: 2px dashed #4a6a8c; border-radius: 12px; padding: 32px 16px; text-align: center; margin-top: 16px; background: #132539; }
+  #drop.over { border-color: #d4a72c; background: #1a3049; }
+  button { background: #d4a72c; color: #14202e; border: 0; border-radius: 8px; padding: 14px 22px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 16px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .file { background: #16283d; border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 14px; }
+  .bar { height: 8px; background: #0f1c2e; border-radius: 4px; margin-top: 6px; overflow: hidden; }
+  .bar > div { height: 100%; background: #d4a72c; width: 0%; transition: width .2s; }
+  .ok { color: #7dd87d; } .err { color: #ff8a8a; }
+  #done { display: none; background: #17351c; border: 1px solid #2e6b34; border-radius: 12px; padding: 18px; margin-top: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>{{STREAM_LABEL}}</h1>
+  <p class="sub">Send job photos, videos and files straight to the office. No sign-in needed. Don't close this page until it says done — if your connection drops, just tap Upload again and it resumes.</p>
+
+  <label for="who">Your name</label>
+  <input type="text" id="who" placeholder="e.g. Jessica" autocomplete="name">
+
+  <div id="drop">
+    <div>Tap to pick photos, videos or files, or drop them here</div>
+    <input type="file" id="pick" multiple style="display:none">
+  </div>
+
+  <div id="list"></div>
+  <button id="go" disabled>Upload</button>
+  <div id="done"><strong class="ok">✓ All uploaded — thank you!</strong><br>The office has your files. You can close this page.</div>
+</div>
+<script>
+const TOKEN = location.pathname.split('/').filter(Boolean).pop();
+const CHUNK = 8 * 1024 * 1024; // 8 MiB — above B2 multipart's 5 MiB minimum part size, multiple of the 256 KiB granularity
+const pick = document.getElementById('pick');
+const drop = document.getElementById('drop');
+const list = document.getElementById('list');
+const go = document.getElementById('go');
+let files = [];
+
+drop.addEventListener('click', () => pick.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); });
+pick.addEventListener('change', () => addFiles(pick.files));
+
+function addFiles(fl) {
+  for (const f of fl) files.push({ file: f, state: 'queued', sessionId: null, offset: 0 });
+  render(); go.disabled = files.length === 0;
+}
+function render() {
+  list.innerHTML = '';
+  files.forEach((it, i) => {
+    const d = document.createElement('div'); d.className = 'file';
+    const pct = it.file.size ? Math.floor(100 * it.offset / it.file.size) : 0;
+    d.innerHTML = '<div>' + escapeHtml(it.file.name) + ' — <span class="' +
+      (it.state === 'done' ? 'ok' : it.state === 'error' ? 'err' : '') + '">' +
+      (it.state === 'done' ? '✓ uploaded' : it.state === 'error' ? 'failed — tap Upload to resume' : it.state === 'uploading' ? pct + '%' : 'ready') +
+      '</span></div><div class="bar"><div style="width:' + pct + '%"></div></div>';
+    list.appendChild(d);
+  });
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function api(path, opts) {
+  const res = await fetch(path, { ...opts, headers: { 'x-upload-token': TOKEN, ...(opts && opts.headers || {}) } });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+  return res.json();
+}
+
+async function uploadOne(it) {
+  const who = document.getElementById('who').value.trim() || 'crew';
+  if (!it.sessionId) {
+    const init = await api('/u/api/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: it.file.name, size: it.file.size, mimeType: it.file.type, uploader: who }) });
+    it.sessionId = init.id;
+  } else {
+    const st = await api('/u/api/status/' + it.sessionId);
+    if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return; }
+    it.offset = st.offset;
+  }
+  it.state = 'uploading'; render();
+  while (it.offset < it.file.size) {
+    const end = Math.min(it.offset + CHUNK, it.file.size);
+    const blob = it.file.slice(it.offset, end);
+    const buf = await blob.arrayBuffer();
+    const r = await api('/u/api/chunk/' + it.sessionId, { method: 'PUT', headers: { 'x-chunk-start': String(it.offset) }, body: buf });
+    it.offset = r.offset;
+    if (r.complete) break;
+    render();
+  }
+  it.state = 'done'; it.offset = it.file.size; render();
+}
+
+go.addEventListener('click', async () => {
+  go.disabled = true;
+  document.getElementById('done').style.display = 'none';
+  for (const it of files) {
+    if (it.state === 'done') continue;
+    let attempts = 0;
+    while (it.state !== 'done' && attempts < 5) {
+      try { await uploadOne(it); }
+      catch (e) { attempts++; it.state = 'error'; render(); await new Promise(r => setTimeout(r, 2000 * attempts)); }
+    }
+  }
+  go.disabled = false;
+  if (files.every(f => f.state === 'done')) document.getElementById('done').style.display = 'block';
+});
+</script>
+</body>
+</html>
