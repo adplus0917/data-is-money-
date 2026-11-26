@@ -109,7 +109,7 @@ function postgres(url) {
     /* ----- appointment bookings (screening profile rides along) ----- */
     async createBooking(bk) {
       const { rows: [r] } = await pool.query(
-        `INSERT INTO bookings (name, email, phone, appt_date, window, note, lang, folio, profile, zoom_invitees)
+        `INSERT INTO bookings (name, email, phone, appt_date, "window", note, lang, folio, profile, zoom_invitees)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *, appt_date::text AS appt_date`,
         [bk.name, bk.email, bk.phone || null, bk.appt_date, bk.window, bk.note || null, bk.lang || null, bk.folio || null,
          JSON.stringify(bk.profile), bk.zoom_invitees || []]);

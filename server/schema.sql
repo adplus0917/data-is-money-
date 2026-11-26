@@ -394,7 +394,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   email           text NOT NULL,
   phone           text,                        -- WhatsApp, optional
   appt_date       date NOT NULL,               -- the chosen day (America/New_York)
-  window          text NOT NULL CHECK (window IN ('morning','afternoon')),
+  "window"        text NOT NULL CHECK ("window" IN ('morning','afternoon')),
   note            text,
   lang            text,
   folio           text,                        -- set if the seller later signs (same session)
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   zoom_note       text
 );
 CREATE INDEX IF NOT EXISTS bookings_created_idx ON bookings (created_at DESC);
-CREATE INDEX IF NOT EXISTS bookings_appt_idx ON bookings (appt_date, window);
+CREATE INDEX IF NOT EXISTS bookings_appt_idx ON bookings (appt_date, "window");
 
 CREATE OR REPLACE FUNCTION audit_log_chain() RETURNS trigger AS $$
 BEGIN
