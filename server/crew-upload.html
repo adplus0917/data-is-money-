@@ -21,6 +21,9 @@
   .bar { height: 8px; background: #0f1c2e; border-radius: 4px; margin-top: 6px; overflow: hidden; }
   .bar > div { height: 100%; background: #d4a72c; width: 0%; transition: width .2s; }
   .ok { color: #7dd87d; } .err { color: #ff8a8a; }
+  .file.stuck { border: 2px solid #ff8a8a; background: #3d1f24; cursor: pointer; }
+  .file .rm { float: right; width: auto; margin: 0 0 0 10px; padding: 2px 10px; font-size: 14px; background: #35506e; color: #f2f5f8; border-radius: 6px; }
+  #clearDead { display: none; background: #35506e; color: #f2f5f8; }
   #done { display: none; background: #17351c; border: 1px solid #2e6b34; border-radius: 12px; padding: 18px; margin-top: 20px; text-align: center; }
 </style>
 </head>
@@ -38,6 +41,7 @@
   </div>
 
   <div id="counter"><strong id="countText">0 of 0 done</strong><div class="now" id="nowText"></div></div>
+  <button id="clearDead">Remove all stuck entries</button>
   <div id="list"></div>
   <button id="go" disabled>Upload</button>
   <div id="done"><strong class="ok">✓ All uploaded — thank you!</strong><br>The office has your files. You can close this page.</div>
@@ -78,6 +82,8 @@ const counter = document.getElementById('counter');
 const countText = document.getElementById('countText');
 const nowText = document.getElementById('nowText');
 const whoEl = document.getElementById('who');
+const clearDeadBtn = document.getElementById('clearDead');
+let armedFid = null; // needs-file entry armed for one-tap re-pick
 let files = [];
 let directMode = 'unknown'; // 'unknown' -> 'direct' | 'relay' after the first part PUT attempt
 let running = false;
@@ -86,7 +92,14 @@ const fidOf = (name, size, lastModified) => name + '|' + size + '|' + (lastModif
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ---------------- persistence (localStorage, best-effort) ---------------- */
-const LS_KEY = 'crewup-v2:' + TOKEN;
+// v3 (Nov 27 2026): the storage backend flipped from Backblaze B2 to
+// Amazon S3 today. v2 local state can carry pre-flip sessions whose
+// multipart uploads live on the OLD backend: restored, they dead-end
+// this page (rows that can never move) and a status check against the
+// new backend can even misread them as complete. Drop v2 state — a
+// re-pick against the current backend is the only safe resume.
+const LS_KEY = 'crewup-v3:' + TOKEN;
+try { localStorage.removeItem('crewup-v2:' + TOKEN); } catch (e) { /* ignore */ }
 let lsDirty = false;
 function saveState() {
   lsDirty = false;
@@ -123,6 +136,12 @@ function mkItem(o) {
 }
 function buildRow(it) {
   const d = document.createElement('div'); d.className = 'file';
+  const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'Remove from this list';
+  rm.addEventListener('click', (e) => { e.stopPropagation(); removeItem(it); });
+  d.appendChild(rm);
+  d.addEventListener('click', () => {
+    if (it.state === 'needs-file') { armedFid = it.fid; pick.click(); }
+  });
   const line = document.createElement('div');
   line.appendChild(document.createTextNode(it.name + ' — '));
   const st = document.createElement('span'); line.appendChild(st);
@@ -138,11 +157,12 @@ function stateText(it) {
   if (it.state === 'done') return ['✓ uploaded', 'ok'];
   if (it.state === 'error') return ['failed — tap Upload to resume', 'err'];
   if (it.state === 'uploading') return [pct + '%', ''];
-  if (it.state === 'needs-file') return ['pick this file again to resume', ''];
+  if (it.state === 'needs-file') return ['⚠ NOT uploaded — tap here to pick this file again', 'err'];
   return ['ready', ''];
 }
 function updateRow(it) {
   if (!it.row) return;
+  it.row.classList.toggle('stuck', it.state === 'needs-file');
   const [txt, cls] = stateText(it);
   it.statusEl.textContent = txt;
   it.statusEl.className = cls;
@@ -155,7 +175,11 @@ function updateCounter() {
   counter.style.display = total ? 'block' : 'none';
   countText.textContent = done + ' of ' + total + ' done' + (failed ? ' • ' + failed + ' failed' : '');
   const now = files.filter(f => f.state === 'uploading').map(f => f.name);
-  nowText.textContent = now.length ? 'Uploading: ' + now.join(', ') : (running ? 'Working…' : '');
+  let line = now.length ? 'Uploading: ' + now.join(', ') : (running ? 'Working…' : '');
+  const dead = files.filter(f => f.state === 'needs-file').length;
+  if (dead) line = (line ? line + ' • ' : '') + '⚠ ' + dead + ' file' + (dead > 1 ? 's are' : ' is') + ' NOT uploaded — tap a red row to pick the file again, or ✕ to remove it';
+  nowText.textContent = line;
+  clearDeadBtn.style.display = dead ? 'block' : 'none';
 }
 function setState(it, s) { it.state = s; updateRow(it); updateCounter(); markDirty(); }
 
@@ -166,13 +190,53 @@ drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('
 pick.addEventListener('change', () => addFiles(pick.files));
 whoEl.addEventListener('change', markDirty);
 
+function removeItem(it) {
+  if (it.state === 'uploading') return;
+  const i = files.indexOf(it);
+  if (i === -1) return;
+  files.splice(i, 1);
+  if (it.row) it.row.remove();
+  if (armedFid === it.fid) armedFid = null;
+  if (it.sessionId && it.state !== 'done') {
+    api('/u/api/abort', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.sessionId }) }).catch(() => {});
+  }
+  if (!files.length) go.disabled = true;
+  updateCounter(); markDirty(); saveState();
+}
+clearDeadBtn.addEventListener('click', () => {
+  for (const it of files.filter(f => f.state === 'needs-file')) removeItem(it);
+});
+
+function attachPick(target, spare) {
+  target.file = spare;
+  if (spare.size !== target.size) { // different file: any old session is meaningless
+    target.sessionId = null; target.offset = 0; target.doneParts = new Set(); target.signCache = new Map();
+  }
+  target.name = spare.name; target.size = spare.size; target.lastModified = spare.lastModified || 0;
+  target.fid = fidOf(spare.name, spare.size, spare.lastModified);
+  if (target.row) target.row.querySelector('div').firstChild.textContent = target.name + ' — ';
+  setState(target, 'queued');
+}
 function addFiles(fl) {
-  for (const f of fl) {
+  const list = [...fl];
+  // One-tap recovery FIRST: a stuck row was tapped and the picker was
+  // opened for it. The first pick that does not exactly match an
+  // existing entry belongs to that row (renamed / re-saved file) —
+  // claim it before the generic loop turns it into a duplicate row.
+  if (armedFid) {
+    const target = files.find(x => x.fid === armedFid && !x.file);
+    if (target) {
+      const idx = list.findIndex(f => !files.some(x => x.fid === fidOf(f.name, f.size, f.lastModified)));
+      if (idx !== -1) attachPick(target, list.splice(idx, 1)[0]);
+    }
+    armedFid = null;
+  }
+  for (const f of list) {
     const fid = fidOf(f.name, f.size, f.lastModified);
     const existing = files.find(x => x.fid === fid);
     if (existing) {
       existing.file = f;
-      if (existing.state === 'needs-file') setState(existing, existing.sessionId ? 'queued' : 'queued');
+      if (existing.state === 'needs-file') setState(existing, 'queued');
       updateRow(existing);
     } else {
       const it = mkItem({ fid, name: f.name, size: f.size, lastModified: f.lastModified, file: f });
@@ -397,6 +461,17 @@ async function runUploads() {
 
 go.addEventListener('click', async () => {
   if (running) return;
+  // Dead entries (restored, file not re-picked) can never upload. If
+  // they are all there is, Upload must NOT silently do nothing: point
+  // the picker at the first stuck row instead.
+  const dead = files.filter(f => !f.file && f.state !== 'done');
+  const actionable = files.some(f => f.file && f.state !== 'done');
+  if (dead.length && !actionable) {
+    armedFid = dead[0].fid;
+    dead[0].row && dead[0].row.scrollIntoView({ block: 'center' });
+    pick.click();
+    return;
+  }
   running = true;
   go.disabled = true;
   document.getElementById('done').style.display = 'none';
