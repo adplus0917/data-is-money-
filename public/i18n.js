@@ -178,14 +178,14 @@ Object.assign(T.es,{
 Object.assign(T.en,{
  gateT:"Your valuation is ready",gateS:"To see your valuation, leave us your name, your company and your email, and answer five quick questions — we'll send you the next steps there too.",
  gateName:"Your name",gateCompany:"Company name",gateWa:"WhatsApp (optional)",gateBtn:"See my valuation →",gateNote:"No spam and no commitment. Your information stays private and secure.",
- gateErrName:"Please tell us your name.",gateErrCompany:"Please tell us your company name.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)",
+ gateErrName:"Please tell us your name.",gateErrCompany:"Please tell us your company name.",gateWaReq:"WhatsApp / phone",gateErrPhone:"Please add a real phone number (10-15 digits) so our team can reach you.",gateLead:"Valuation lead — captured at the price gate (before the estimate was shown)",
  qIndustry:"What industry is your company in?",qAuthority:"Can you approve data-sharing decisions for your company?",qEmpBand:"How many employees?",qYearsBand:"How many years in operation?",qPosition:"What is your position?",
  gateErrQual:"Please answer all five questions so our team can prepare for your call."
 });
 Object.assign(T.es,{
  gateT:"Tu valoración está lista",gateS:"Para ver tu valoración, déjanos tu nombre, tu empresa y tu correo, y responde cinco preguntas rápidas — ahí te enviamos también los siguientes pasos.",
  gateName:"Tu nombre",gateCompany:"Nombre de la empresa",gateWa:"WhatsApp (opcional)",gateBtn:"Ver mi valoración →",gateNote:"Sin spam y sin compromiso. Tu información se mantiene privada y segura.",
- gateErrName:"Por favor, dinos tu nombre.",gateErrCompany:"Por favor, dinos el nombre de tu empresa.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)",
+ gateErrName:"Por favor, dinos tu nombre.",gateErrCompany:"Por favor, dinos el nombre de tu empresa.",gateWaReq:"WhatsApp / teléfono",gateErrPhone:"Por favor agrega un número de teléfono real (10-15 dígitos) para que nuestro equipo pueda contactarte.",gateLead:"Lead de valoración — captado en la puerta del precio (antes de mostrar el estimado)",
  qIndustry:"¿En qué industria está tu empresa?",qAuthority:"¿Puedes aprobar las decisiones de compartir datos de tu empresa?",qEmpBand:"¿Cuántos empleados?",qYearsBand:"¿Cuántos años lleva operando?",qPosition:"¿Cuál es tu puesto?",
  gateErrQual:"Por favor responde las cinco preguntas para que nuestro equipo se prepare para tu llamada."
 });
@@ -207,7 +207,8 @@ Object.assign(T.en,{
  bkContinue:"Continue to the agreement",
  tabBookings:"Appointments",bkCols:["Booked","Appointment","Name","Email","WhatsApp","Company profile","Estimate","Status","Zoom","Note"],bkEmpty:"No appointments yet. Bookings appear here the moment a seller reserves a slot.",
  bkZoomBtn:"Create Zoom",bkZoomFor:"Invitees: Gil, Tyler, Miguel",
- tabLeads:"Leads",leadCols:["Received","Name","Company","WhatsApp / Phone","Email","Industry","Can approve?","Employees","Years","Position","Source","Assigned to","Status"],leadEmpty:"No leads yet. Funnel and ad-form leads appear here the moment they come in.",leadUnassigned:"Unassigned"
+ tabCRM:"CRM",crmCols:["Score","Folio","Company","Contact","Phone","Email","Industry","Employees","Years","Worth shown","Booking","Received"],crmShow:"Show",crmAllScores:"All scores",crmLow:"7 & below",crmSortL:"Sort",crmSortScore:"Score - highest first",crmSortDate:"Newest first",crmBooked:"Booked",crmNotBooked:"Not booked",crmEmpty:"No leads yet. Screened leads appear here the moment they come in.",
+ tabLeads:"Leads",leadCols:["Received","Score","Name","Company","WhatsApp / Phone","Email","Industry","Can approve?","Employees","Years","Position","Source","Assigned to","Status"],leadEmpty:"No leads yet. Funnel and ad-form leads appear here the moment they come in.",leadUnassigned:"Unassigned"
 });
 Object.assign(T.es,{
  bkNext:"Reserva tu cita →",bkContactL:"Te contactamos en:",bkDayL:"Elige un día",bkWinL:"Tu hora de Zoom",
@@ -220,5 +221,6 @@ Object.assign(T.es,{
  bkContinue:"Continuar al contrato",
  tabBookings:"Citas",bkCols:["Reservada","Cita","Nombre","Correo","WhatsApp","Perfil de la empresa","Estimado","Estado","Zoom","Nota"],bkEmpty:"Sin citas todavía. Las reservas aparecen aquí en cuanto un vendedor aparta su horario.",
  bkZoomBtn:"Crear Zoom",bkZoomFor:"Invitados: Gil, Tyler, Miguel",
- tabLeads:"Leads",leadCols:["Recibido","Nombre","Empresa","WhatsApp / Teléfono","Correo","Industria","¿Puede aprobar?","Empleados","Años","Puesto","Origen","Asignado a","Estado"],leadEmpty:"Sin leads todavía. Los leads del embudo y de los anuncios aparecen aquí en cuanto llegan.",leadUnassigned:"Sin asignar"
+ tabCRM:"CRM",crmCols:["Puntaje","Folio","Empresa","Contacto","Teléfono","Correo","Industria","Empleados","Años","Valor mostrado","Cita","Recibido"],crmShow:"Mostrar",crmAllScores:"Todos los puntajes",crmLow:"7 o menos",crmSortL:"Ordenar",crmSortScore:"Puntaje - mayor primero",crmSortDate:"Más recientes primero",crmBooked:"Reservada",crmNotBooked:"Sin reservar",crmEmpty:"Sin leads todavía. Los leads evaluados aparecen aquí en cuanto llegan.",
+ tabLeads:"Leads",leadCols:["Recibido","Puntaje","Nombre","Empresa","WhatsApp / Teléfono","Correo","Industria","¿Puede aprobar?","Empleados","Años","Puesto","Origen","Asignado a","Estado"],leadEmpty:"Sin leads todavía. Los leads del embudo y de los anuncios aparecen aquí en cuanto llegan.",leadUnassigned:"Sin asignar"
 });
