@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data worth, how much? | DATA Patrimonio</title>
+<meta name="description" content="Data worth, how much? Answer a few questions, see what your company's data could be worth, and book your Zoom call.">
+<meta name="robots" content="noindex, follow">
+<link rel="canonical" href="https://dataismoney.ai/screen">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/screen">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+      <polygon fill="#c9a227" points="22,1 25.5,8.2 33.1,4.8 32.1,12.9 40.2,13.3 35.5,19.9 42.3,24.4 34.6,27 37.2,34.7 29.3,33.4 27.6,41.4 22,35.6 16.4,41.4 14.7,33.4 6.8,34.7 9.4,27 1.7,24.4 8.5,19.9 3.8,13.3 11.9,12.9 10.9,4.8 18.5,8.2"/>
+      <circle cx="22" cy="22" r="11.5" fill="#0b1a33"/>
+      <circle cx="17.8" cy="20" r="1.6" fill="#e6c452"/><circle cx="26.2" cy="20" r="1.6" fill="#e6c452"/>
+      <path d="M19 24.5h6l-3 3.2z" fill="#e6c452"/><path d="M22 27.7v2.3M18.5 30.5q3.5 2 7 0" stroke="#e6c452" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+    </svg>
+    <span><b>DATA PATRIMONIO</b><small id="tag"></small></span>
+  </a>
+  <div class="right">
+    <button class="pill fbnav" type="button" id="fbTop"></button>
+    <div role="group" aria-label="Language" style="display:flex;gap:4px">
+      <button class="pill" type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button class="pill" type="button" data-lang="es" aria-pressed="false">ES</button>
+    </div>
+  </div>
+</header>
+
+<!-- The screening page is ONLY the funnel: it opens on the first
+     question. The elements below exist (hidden) because the shared
+     funnel script (app.js) renders the whole site's windows into
+     fixed element ids; on this page those windows stay hidden and
+     unreachable — there is no hero and no welcome here. -->
+<div hidden aria-hidden="true">
+  <h1 id="heroT"></h1><p id="heroP"></p>
+  <a id="ctaBtn" href="#start"></a>
+  <span id="trust"></span><span id="heroChip"></span><span id="sound-label"></span>
+  <audio id="ambient-audio" preload="none"></audio>
+  <nav id="topnav"></nav>
+  <section id="how"></section>
+  <section id="market"></section>
+  <section id="seguridad"></section>
+  <section id="faq"></section>
+  <section id="contacto"></section>
+</div>
+
+<main class="wrap" id="start" aria-live="polite">
+  <div class="bar" id="bar"></div>
+  <div class="stepnames" id="stepnames"></div>
+  <div class="card" id="panel"></div>
+</main>
+
+<footer id="foot"></footer>
+<nav class="footnav" aria-label="Legal">
+  <a class="pill" href="/terms">Terms &amp; Conditions</a>
+  <a class="pill" href="/privacy">Privacy Policy</a>
+  <a class="pill" href="/terminos">Términos y Condiciones</a>
+  <a class="pill" href="/privacidad">Política de Privacidad</a>
+</nav>
+<div id="chatRoot"></div>
+<div id="fbRoot"></div>
+
+<!-- load order matters: engine (prices) → i18n (words) → screen
+     (points the session at the funnel + raises the screen gates)
+     → app (the funnel itself, shared with the homepage) -->
+<script src="/engine.js"></script>
+<script src="/i18n.js?v=6"></script>
+<script src="/screen.js"></script>
+<script src="/app.js?v=7"></script>
+</body>
+</html>

@@ -47,6 +47,7 @@ const API = {
 };
 
 let signedIn = false, rows = [], frows = [], crows = [], mrows = [], brows = [], lrows = [], srows = [], tab = "subs", timer = null, err = "", vaultOn = false;
+let leadScoreFilter = "", leadSort = "score", crmTier = "", crmSort = "score";
 fetch("/api/config").then(r => r.json()).then(j => { vaultOn = !!j.vault; if (signedIn) render(); }).catch(() => {});
 
 async function load() {
@@ -66,7 +67,7 @@ function panelHTML() {
   const l = L();
   const dt = x => { const d = new Date(x); return isNaN(d) ? "—" : d.toLocaleString(lang === "es" ? "es-US" : "en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
   const pipe = rows.filter(r => r.status !== "Pagado").reduce((s, r) => s + (+r.estimate_high || 0), 0);
-  const tbs = [["subs", l.tabSubs], ["fb", l.tabFb], ["chats", l.tabChats], ["contact", l.tabContact], ["bookings", l.tabBookings], ["leads", l.tabLeads], ...(vaultOn ? [["vault", VAULT_TAB.label(lang)]] : []), ["how", l.tabHow], ["eng", l.tabEng]].map(([k, t]) => `<button type="button" class="pill" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join("");
+  const tbs = [["subs", l.tabSubs], ["fb", l.tabFb], ["chats", l.tabChats], ["contact", l.tabContact], ["bookings", l.tabBookings], ["leads", l.tabLeads], ["crm", l.tabCRM], ...(vaultOn ? [["vault", VAULT_TAB.label(lang)]] : []), ["how", l.tabHow], ["eng", l.tabEng]].map(([k, t]) => `<button type="button" class="pill" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join("");
   let body = "";
   if (tab === "subs") body = `<div class="nav" style="margin:0 0 14px"><a class="btn" href="/api/admin/export.csv">${l.exCsv}</a><a class="btn" href="/api/admin/export.csv?table=feedback">CSV · ${l.tabFb}</a><a class="btn" href="/api/admin/export.json">${l.exJson}</a></div>` +
     (rows.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>
@@ -100,14 +101,44 @@ function panelHTML() {
     // CRM calling list (Nov 26 2026): qualifier leads from the site gate
     // and Meta instant forms. Status + assignee are caller-updatable;
     // "Unassigned" is the queue any caller claims from (claim itself is
-    // done from a staff account in the console API).
-    body = lrows.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.leadCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${lrows.map(x => `<tr>
+    // done from a staff account in the console API). Lead score 1-10
+    // (Nov 27 2026, Miguel's order): filter by tier, sort 10s first.
+    const tierOk = (x, f) => f === "" || (f === "low" ? (x.lead_score ?? 0) <= 7 : x.lead_score === +f);
+    const sortRows = (arr, mode) => arr.slice().sort((a, b) => mode === "date" ? new Date(b.created_at) - new Date(a.created_at) : ((b.lead_score ?? 0) - (a.lead_score ?? 0)) || (new Date(b.created_at) - new Date(a.created_at)));
+    const tierOpts = cur => [["", l.crmAllScores], ["10", "10"], ["9", "9"], ["8", "8"], ["low", l.crmLow]].map(([v, t]) => `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(t)}</option>`).join("");
+    const sortOpts = cur => [["score", l.crmSortScore], ["date", l.crmSortDate]].map(([v, t]) => `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(t)}</option>`).join("");
+    const shown = sortRows(lrows.filter(x => tierOk(x, leadScoreFilter)), leadSort);
+    const controls = `<div class="nav" style="margin:0 0 14px"><label>${esc(l.crmShow)} <select data-leadscorefilter aria-label="${esc(l.crmShow)}">${tierOpts(leadScoreFilter)}</select></label><label>${esc(l.crmSortL)} <select data-leadsort aria-label="${esc(l.crmSortL)}">${sortOpts(leadSort)}</select></label></div>`;
+    body = controls + (shown.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.leadCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${shown.map(x => `<tr>
       <td style="white-space:nowrap">${dt(x.created_at)}</td>
+      <td class="n"><b>${esc(x.lead_score ?? "—")}</b></td>
       <td>${esc(x.name)}</td><td>${esc(x.company_name)}</td><td>${esc(x.phone || "—")}</td><td>${esc(x.email)}</td>
       <td>${esc(lab("industry", x.industry))}</td><td>${esc(lab("authority", x.data_authority))}</td><td>${esc(lab("empband", x.employee_band))}</td><td>${esc(lab("yearsband", x.years_band))}</td><td>${esc(lab("position", x.position))}</td>
       <td>${esc(lab("leadsource", x.source))}</td>
       <td><select data-leadassign="${esc(x.id)}" aria-label="Assignee"><option value="" ${!x.assigned_to ? "selected" : ""}>${esc(l.leadUnassigned)}</option>${srows.map(s => `<option value="${esc(s.email)}" ${x.assigned_to === s.email ? "selected" : ""}>${esc(s.name || s.email)}</option>`).join("")}</select></td>
-      <td><select data-leadstatus="${esc(x.id)}" aria-label="Lead status">${O.leadstatus.map(([s]) => `<option value="${esc(s)}" ${x.status === s ? "selected" : ""}>${esc(lab("leadstatus", s))}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${l.leadEmpty}</p>`;
+      <td><select data-leadstatus="${esc(x.id)}" aria-label="Lead status">${O.leadstatus.map(([s]) => `<option value="${esc(s)}" ${x.status === s ? "selected" : ""}>${esc(lab("leadstatus", s))}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${l.leadEmpty}</p>`);
+  }
+  if (tab === "crm") {
+    // CRM view (Nov 27 2026, Miguel's order): every screened lead - the
+    // screening page and the homepage funnel land in the SAME leads
+    // table - with its 1-10 score, folio, the worth it was shown and
+    // its booking state. Default order: highest score first, so the
+    // team works 10s, then 9s, then 8s. Internal only (panel login).
+    const tierOkC = x => crmTier === "" || (crmTier === "low" ? (x.lead_score ?? 0) <= 7 : x.lead_score === +crmTier);
+    const sortRowsC = arr => arr.slice().sort((a, b) => crmSort === "date" ? new Date(b.created_at) - new Date(a.created_at) : ((b.lead_score ?? 0) - (a.lead_score ?? 0)) || (new Date(b.created_at) - new Date(a.created_at)));
+    const tierOptsC = [["", l.crmAllScores], ["10", "10"], ["9", "9"], ["8", "8"], ["low", l.crmLow]].map(([v, t]) => `<option value="${v}" ${crmTier === v ? "selected" : ""}>${esc(t)}</option>`).join("");
+    const sortOptsC = [["score", l.crmSortScore], ["date", l.crmSortDate]].map(([v, t]) => `<option value="${v}" ${crmSort === v ? "selected" : ""}>${esc(t)}</option>`).join("");
+    const bkDayC = date => new Date(String(date).slice(0, 10) + "T12:00:00Z").toLocaleDateString(lang === "es" ? "es-US" : "en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
+    const shownC = sortRowsC(lrows.filter(tierOkC));
+    const controlsC = `<div class="nav" style="margin:0 0 14px"><label>${esc(l.crmShow)} <select data-crmtier aria-label="${esc(l.crmShow)}">${tierOptsC}</select></label><label>${esc(l.crmSortL)} <select data-crmsort aria-label="${esc(l.crmSortL)}">${sortOptsC}</select></label></div>`;
+    body = controlsC + (shownC.length ? `<div class="scroll"><table class="stack"><thead><tr>${l.crmCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${shownC.map(x => { const c = x.crm || {}; return `<tr>
+      <td class="n"><b>${esc(x.lead_score ?? "—")}</b></td>
+      <td style="white-space:nowrap">${esc(c.folio || "—")}</td>
+      <td>${esc(x.company_name)}</td><td>${esc(x.name)}</td><td>${esc(x.phone || "—")}</td><td>${esc(x.email)}</td>
+      <td>${esc(lab("industry", x.industry))}</td><td>${esc(lab("empband", x.employee_band))}</td><td>${esc(lab("yearsband", x.years_band))}</td>
+      <td class="n">${c.worth_low != null ? esc(usd(c.worth_low) + " – " + usd(c.worth_high)) : "—"}</td>
+      <td>${c.booked ? `${esc(l.crmBooked)} · ${esc(bkDayC(c.appt_date))} · ${esc(l.bkAfternoonH)}` : esc(l.crmNotBooked)}</td>
+      <td style="white-space:nowrap">${dt(x.created_at)}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="sub">${l.crmEmpty}</p>`);
   }
   if (tab === "vault") body = VAULT_TAB.render(lang);
   if (tab === "how") body = `<h3 style="font-size:20px">${l.pipeT}</h3><div class="hg">${l.pipe.map((h, n) => `<div><i>${n + 1}</i><h3>${h[0]}</h3><p>${h[1]}</p></div>`).join("")}</div>`;
@@ -159,6 +190,13 @@ document.addEventListener("submit", async e => {
 });
 document.addEventListener("change", async e => {
   const s = e.target;
+  if (s.tagName === "SELECT" && (s.dataset.leadscorefilter !== undefined || s.dataset.leadsort !== undefined || s.dataset.crmtier !== undefined || s.dataset.crmsort !== undefined)) {
+    if (s.dataset.leadscorefilter !== undefined) leadScoreFilter = s.value;
+    if (s.dataset.leadsort !== undefined) leadSort = s.value;
+    if (s.dataset.crmtier !== undefined) crmTier = s.value;
+    if (s.dataset.crmsort !== undefined) crmSort = s.value;
+    render(); return;
+  }
   if ((s.dataset.leadstatus || s.dataset.leadassign) && s.tagName === "SELECT") {
     const id = s.dataset.leadstatus || s.dataset.leadassign;
     const patch = s.dataset.leadstatus ? { status: s.value } : { assigned_to: s.value || null };
