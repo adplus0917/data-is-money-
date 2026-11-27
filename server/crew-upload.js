@@ -41,6 +41,11 @@
 // mounts DISABLED — every token behaves exactly like a bad token
 // (page 404, API 403) — and it can never take the site down.
 //
+// STORAGE BACKEND: any S3-compatible store. Since Nov 27 2026 the
+// primary target is Amazon S3 (see ops/S3-GO-LIVE.md); Backblaze B2
+// remains supported by pointing the same env at it. crew-s3.js reads
+// S3_* env first and falls back to the legacy B2_* names.
+//
 // Config (env) — same names as the standalone service:
 //   UPLOAD_COMPANIES    JSON map: token -> { slug, subfolder, label }
 //                       slug      = company prefix in the bucket
@@ -154,12 +159,97 @@ function pageCsp(endpointOrigin) {
   ].join("; ");
 }
 
-module.exports = function mount(app, { limiter } = {}) {
+module.exports = function mount(app, { limiter, db } = {}) {
   const state = buildState(process.env);
   const limit = typeof limiter === "function" ? limiter : ((req, res, next) => next());
   const pageTemplate = fs.readFileSync(path.join(__dirname, "crew-upload.html"), "utf8");
-  const sessions = new Map(); // id -> { handle, key, size, offset, createdAt }
+
+  /* ---------- session store: memory cache + Postgres persistence ----------
+     Nov 27 2026 rebuild: sessions used to live ONLY in this process's
+     memory (a Map), so any restart/deploy/recycle wiped every in-flight
+     upload and a mass batch died with it. Sessions are now persisted to
+     the crew_upload_sessions table (the B2/S3 multipart uploadId + key
+     are all a session is — parts and offsets are always re-derivable
+     from the storage backend's own part list). Completion is recorded
+     with the object's key/size/ETag, so "did it land?" has a durable
+     server-side answer. Without a Postgres pool (local JSON-db runs)
+     the store degrades to memory-only, exactly as before. */
+  const sessions = new Map(); // id -> { handle, key, size, offset, createdAt, restored?, synced? }
+  const completedSessions = new Map(); // id -> { key, size, etag, at } — bounded; lets /status keep answering "complete" after the live session is dropped, in BOTH store modes (the Postgres row does this durably; this covers the memory fallback and the page's confirm-after-upload step)
   let sessionCounter = 0;
+  let activeSessions = 0;
+  const MAX_ACTIVE_SESSIONS = parseInt(process.env.MAX_ACTIVE_UPLOAD_SESSIONS || "10000", 10);
+  const pool = db && db.kind === "postgres" && db.pool ? db.pool : null;
+  let storeReady = Promise.resolve();
+  if (pool) {
+    storeReady = (async () => {
+      await pool.query(`CREATE TABLE IF NOT EXISTS crew_upload_sessions (
+        id TEXT PRIMARY KEY, key TEXT NOT NULL, upload_id TEXT NOT NULL,
+        size BIGINT NOT NULL, uploader TEXT, name TEXT,
+        state TEXT NOT NULL DEFAULT 'active', etag TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await pool.query(`DELETE FROM crew_upload_sessions WHERE state = 'complete' AND updated_at < now() - interval '30 days'`);
+      const { rows } = await pool.query(`SELECT count(*)::int AS n FROM crew_upload_sessions WHERE state = 'active'`);
+      activeSessions = rows[0] ? rows[0].n : 0;
+    })().catch((e) => { console.error("crew-upload: session store unavailable, memory-only —", e.message); });
+  }
+  async function storePut(id, sess, meta) {
+    sessions.set(id, sess);
+    if (!pool) return;
+    try {
+      await storeReady;
+      await pool.query(
+        `INSERT INTO crew_upload_sessions (id, key, upload_id, size, uploader, name, state)
+         VALUES ($1,$2,$3,$4,$5,$6,'active')
+         ON CONFLICT (id) DO UPDATE SET updated_at = now()`,
+        [id, sess.key, sess.handle.uploadId, sess.size, meta && meta.uploader || null, meta && meta.name || null]);
+    } catch (e) { console.error("crew-upload: session persist failed —", e.message); }
+  }
+  // Returns a session object, { completeRecord } for a finished upload,
+  // or null when the id is unknown anywhere.
+  async function storeGet(id) {
+    if (sessions.has(id)) return sessions.get(id);
+    if (completedSessions.has(id)) { const c = completedSessions.get(id); return { completeRecord: { key: c.key, size: c.size, etag: c.etag } }; }
+    if (!pool) return null;
+    try {
+      await storeReady;
+      const { rows } = await pool.query(`SELECT * FROM crew_upload_sessions WHERE id = $1`, [id]);
+      if (!rows[0]) return null;
+      const r = rows[0];
+      if (r.state === "complete") return { completeRecord: { key: r.key, size: Number(r.size), etag: r.etag } };
+      const sess = { handle: { uploadId: r.upload_id, key: r.key, parts: [], received: 0 },
+        key: r.key, size: Number(r.size), offset: 0, createdAt: new Date(r.created_at).getTime(), restored: true, synced: false };
+      sessions.set(id, sess);
+      return sess;
+    } catch (e) { console.error("crew-upload: session load failed —", e.message); return null; }
+  }
+  async function storeDelete(id) {
+    if (sessions.delete(id)) activeSessions = Math.max(0, activeSessions - 1);
+    if (!pool) return;
+    try { await pool.query(`DELETE FROM crew_upload_sessions WHERE id = $1`, [id]); } catch {}
+  }
+  async function storeComplete(id, file, size) {
+    const sess = sessions.get(id);
+    if (sessions.delete(id)) activeSessions = Math.max(0, activeSessions - 1);
+    completedSessions.set(id, { key: (file && file.key) || (sess && sess.key) || null, size: size || (sess && sess.size) || 0, etag: file && file.etag ? String(file.etag) : null, at: Date.now() });
+    if (completedSessions.size > 5000) completedSessions.delete(completedSessions.keys().next().value);
+    if (!pool) return;
+    try {
+      await pool.query(`UPDATE crew_upload_sessions SET state = 'complete', etag = $2, updated_at = now() WHERE id = $1`,
+        [id, file && file.etag ? String(file.etag) : null]);
+    } catch (e) { console.error("crew-upload: completion persist failed —", e.message); }
+  }
+  // A restored session's handle has empty parts/received; the relay
+  // chunk path needs them synced from the backend's own part list
+  // before sendChunk can append. (Status and completeDirect already
+  // re-list parts themselves.)
+  async function syncRestored(sess) {
+    if (!sess.restored || sess.synced) return null;
+    const r = await state.transport.sessionParts(sess.handle, sess.size);
+    sess.synced = true;
+    sess.offset = r.offset;
+    return r;
+  }
 
   const companyOf = (req) => (state.enabled ? state.companies.get(req.headers["x-upload-token"] || "") : null);
 
@@ -183,7 +273,12 @@ module.exports = function mount(app, { limiter } = {}) {
   app.get("/u/:token/", page);
 
   // POST /u/api/init { name, size, mimeType, uploader } -> { id, offset: 0 }
-  app.post("/u/api/init", limit(60, 10 * 60e3), async (req, res) => {
+  // Rate limits on the crew routes are sized for MASS batches from one
+  // IP (a phone uploading 1,500 photos is one IP): the old init cap of
+  // 60 per 10 min per IP made every file past #60 fail before it could
+  // start — the Nov 27 mass-upload collapse. The stream token remains
+  // the real access control.
+  app.post("/u/api/init", limit(2000, 10 * 60e3), async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
@@ -194,14 +289,15 @@ module.exports = function mount(app, { limiter } = {}) {
       if (size > MAX_FILE_BYTES) return res.status(413).json({ error: `file too large (max ${MAX_FILE_BYTES} bytes)` });
       const ext = path.extname(name).toLowerCase();
       if (BLOCKED_EXT.has(ext)) return res.status(415).json({ error: "file type not allowed" });
-      if (sessions.size >= MAX_FILES * 4) return res.status(429).json({ error: "too many active sessions" });
+      if (activeSessions >= MAX_ACTIVE_SESSIONS) return res.status(429).json({ error: "too many active sessions" });
       const uploader = sanitizeName(body.uploader || "crew");
       const key = company.subfolder
         ? `${company.slug}/${company.subfolder}/${uploader} - ${name}`
         : `${company.slug}/${uploader} - ${name}`;
       const handle = await state.transport.initSession({ key, size, mimeType: body.mimeType });
       const id = `s${++sessionCounter}-${Date.now().toString(36)}`;
-      sessions.set(id, { handle, key, size, offset: 0, createdAt: Date.now() });
+      activeSessions++;
+      await storePut(id, { handle, key, size, offset: 0, createdAt: Date.now(), synced: true }, { uploader, name });
       res.json({ id, offset: 0, chunkGranularity: CHUNK_GRANULARITY, partSize: DIRECT_PART_BYTES, direct: true });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
@@ -210,15 +306,19 @@ module.exports = function mount(app, { limiter } = {}) {
 
   // GET /u/api/status/:id -> { offset, complete, partNumbers, partSize, file? }
   // (resume point; partNumbers lets the direct path skip parts already on B2)
-  app.get("/u/api/status/:id", async (req, res) => {
+  app.get("/u/api/status/:id", limit(4000, 10 * 60e3), async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
-      const s = sessions.get(req.params.id);
+      const s = await storeGet(req.params.id);
       if (!s) return res.status(404).json({ error: "unknown session" });
+      if (s.completeRecord) {
+        return res.json({ complete: true, offset: s.completeRecord.size, partNumbers: [], partSize: DIRECT_PART_BYTES, file: { key: s.completeRecord.key, etag: s.completeRecord.etag } });
+      }
       const r = await state.transport.sessionParts(s.handle, s.size);
       s.offset = r.offset;
-      if (r.complete) sessions.delete(req.params.id);
+      s.synced = true;
+      if (r.complete) await storeComplete(req.params.id, r.file, s.size);
       res.json({ ...r, partSize: DIRECT_PART_BYTES });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
@@ -229,13 +329,13 @@ module.exports = function mount(app, { limiter } = {}) {
   // -> { urls: { "<partNumber>": "<presigned PUT url>" }, expiresIn }
   // The browser PUTs part bytes straight to B2 with these URLs; no file
   // data transits this server on the direct path.
-  app.post("/u/api/sign-parts", limit(600, 10 * 60e3), async (req, res) => {
+  app.post("/u/api/sign-parts", limit(4000, 10 * 60e3), async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
       const body = await readJsonBody(req);
-      const s = sessions.get(body.id);
-      if (!s) return res.status(404).json({ error: "unknown session" });
+      const s = await storeGet(body.id);
+      if (!s || s.completeRecord) return res.status(404).json({ error: "unknown session" });
       const nums = [...new Set((Array.isArray(body.partNumbers) ? body.partNumbers : []).map((n) => parseInt(n, 10)))];
       if (!nums.length || nums.length > 256 || nums.some((n) => !Number.isInteger(n) || n < 1 || n > 10000)) {
         return res.status(400).json({ error: "partNumbers must be 1..256 integers in 1..10000" });
@@ -251,15 +351,16 @@ module.exports = function mount(app, { limiter } = {}) {
   // POST /u/api/complete { id } -> { complete: true, offset, file }
   // Completes the multipart session from B2's own part list (the server
   // never trusts browser-reported etags).
-  app.post("/u/api/complete", limit(120, 10 * 60e3), async (req, res) => {
+  app.post("/u/api/complete", limit(2000, 10 * 60e3), async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
       const body = await readJsonBody(req);
-      const s = sessions.get(body.id);
+      const s = await storeGet(body.id);
       if (!s) return res.status(404).json({ error: "unknown session" });
+      if (s.completeRecord) return res.json({ complete: true, offset: s.completeRecord.size, file: { key: s.completeRecord.key, etag: s.completeRecord.etag } });
       const file = await state.transport.completeDirect(s.handle);
-      sessions.delete(body.id);
+      await storeComplete(body.id, file, s.size);
       res.json({ complete: true, offset: s.size, file });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
@@ -268,14 +369,14 @@ module.exports = function mount(app, { limiter } = {}) {
 
   // POST /u/api/abort { id } — best-effort cleanup of a session the
   // sender gave up on (the bucket lifecycle rule is the backstop).
-  app.post("/u/api/abort", limit(120, 10 * 60e3), async (req, res) => {
+  app.post("/u/api/abort", limit(2000, 10 * 60e3), async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
       const body = await readJsonBody(req);
-      const s = sessions.get(body.id);
-      if (s) {
-        sessions.delete(body.id);
+      const s = await storeGet(body.id);
+      if (s && !s.completeRecord) {
+        await storeDelete(body.id);
         await state.transport.abort(s.handle);
       }
       res.json({ ok: true });
@@ -289,8 +390,10 @@ module.exports = function mount(app, { limiter } = {}) {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
-      const s = sessions.get(req.params.id);
-      if (!s) return res.status(404).json({ error: "unknown session" });
+      const s = await storeGet(req.params.id);
+      if (!s || s.completeRecord) return res.status(404).json({ error: "unknown session" });
+      const sync = await syncRestored(s); // restored session: re-derive parts/offset from the backend first
+      if (sync && sync.complete) return res.json({ complete: true, offset: s.size, file: sync.file });
       const start = parseInt(req.headers["x-chunk-start"] || "0", 10);
       const chunk = await readRaw(req);
       if (chunk.length === 0) return res.status(400).json({ error: "empty chunk" });
@@ -303,7 +406,7 @@ module.exports = function mount(app, { limiter } = {}) {
       }
       const r = await state.transport.sendChunk(s.handle, chunk, start, s.size);
       s.offset = r.offset;
-      if (r.complete) sessions.delete(req.params.id);
+      if (r.complete) await storeComplete(req.params.id, r.file, s.size);
       res.json(r);
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });

@@ -80,7 +80,7 @@ require("./console-routes")(app, { db, limiter, log });
 /* ---------- crew uploads: public /u/<token> photo/video upload links
    into the Backblaze B2 crewuploads bucket (isolated router; disabled
    unless UPLOAD_COMPANIES + B2_* env are set — see server/crew-upload.js) ---------- */
-require("./crew-upload")(app, { limiter });
+require("./crew-upload")(app, { limiter, db });
 app.get("/api/config", (req, res) => res.json({ vault: vault.enabled, maxSampleMb: storage.MAX_MB, maxDirectGb: Number(process.env.MAX_DIRECT_UPLOAD_GB || 5) }));
 
 /* ---------- public API (used by the seller funnel) ---------- */

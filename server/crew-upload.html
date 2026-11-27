@@ -15,6 +15,8 @@
   #drop.over { border-color: #d4a72c; background: #1a3049; }
   button { background: #d4a72c; color: #14202e; border: 0; border-radius: 8px; padding: 14px 22px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 16px; }
   button:disabled { opacity: .5; cursor: default; }
+  #counter { display: none; background: #16283d; border: 1px solid #35506e; border-radius: 8px; padding: 10px 12px; margin-top: 16px; font-size: 15px; }
+  #counter .now { color: #b9c7d6; font-size: 13px; margin-top: 4px; }
   .file { background: #16283d; border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 14px; }
   .bar { height: 8px; background: #0f1c2e; border-radius: 4px; margin-top: 6px; overflow: hidden; }
   .bar > div { height: 100%; background: #d4a72c; width: 0%; transition: width .2s; }
@@ -35,59 +37,185 @@
     <input type="file" id="pick" multiple style="display:none">
   </div>
 
+  <div id="counter"><strong id="countText">0 of 0 done</strong><div class="now" id="nowText"></div></div>
   <div id="list"></div>
   <button id="go" disabled>Upload</button>
   <div id="done"><strong class="ok">✓ All uploaded — thank you!</strong><br>The office has your files. You can close this page.</div>
 </div>
 <script>
 const TOKEN = location.pathname.split('/').filter(Boolean).pop();
-// Speed fix (Nov 27 2026): parts go DIRECT from this browser to Backblaze
-// B2 with presigned URLs the server hands out — no proxy hop through the
-// site server — 16 MiB parts, up to 5 uploads in flight at once across
-// ALL files (most photos are a single part, so parallelism has to span
-// files, not just parts of one file). If direct PUTs fail at the network
-// level (e.g. bucket CORS), the file falls back to the legacy proxied
-// chunk path below, which the server reconciles against B2 first.
-const LEGACY_CHUNK = 8 * 1024 * 1024; // legacy path only: above B2's 5 MiB minimum part size, multiple of the 256 KiB granularity
+// ============================================================
+// Crew upload page — rebuilt Nov 27 2026 after the mass-batch
+// collapse (see upload-mass-failure-diagnosis-2026-11-27.md).
+// Design rules that keep a 1,500-file batch alive:
+//  * STRICT QUEUE: at most FILE_CONCURRENCY files move at once;
+//    a file's server session is created just-in-time, when the
+//    file reaches the front — never all sessions up front.
+//  * DIRECT PROBED ONCE: parts can go straight to Backblaze B2
+//    with presigned URLs, but if the first direct PUT fails at
+//    the network level (bucket CORS), the WHOLE batch switches
+//    to the server relay immediately — no per-file flailing.
+//  * EVERY STEP RETRIES with backoff (init, sign, part, chunk,
+//    status, complete), including HTTP 429 — one stall or one
+//    rate-limit response can no longer kill a file.
+//  * PROGRESS SURVIVES: per-file state (session id, done) is
+//    persisted in localStorage and sessions are persisted on
+//    the server, so a page reload or a server restart resumes
+//    instead of restarting from zero.
+//  * LIVE COUNTER: "X of N done" is always visible; rows update
+//    in place (no full-list re-render per progress event).
+// ============================================================
+const LEGACY_CHUNK = 8 * 1024 * 1024; // relay path: above B2's 5 MiB minimum part size, multiple of the 256 KiB granularity
 const DEFAULT_PART = 16 * 1024 * 1024; // replaced by the server's partSize from /u/api/init
-const CONCURRENCY = 5;
+const FILE_CONCURRENCY = 2;
 const SIGN_BATCH = 64;
+const MAX_TRIES = 5;
 const pick = document.getElementById('pick');
 const drop = document.getElementById('drop');
 const list = document.getElementById('list');
 const go = document.getElementById('go');
+const counter = document.getElementById('counter');
+const countText = document.getElementById('countText');
+const nowText = document.getElementById('nowText');
+const whoEl = document.getElementById('who');
 let files = [];
+let directMode = 'unknown'; // 'unknown' -> 'direct' | 'relay' after the first part PUT attempt
+let running = false;
+
+const fidOf = (name, size, lastModified) => name + '|' + size + '|' + (lastModified || 0);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/* ---------------- persistence (localStorage, best-effort) ---------------- */
+const LS_KEY = 'crewup-v2:' + TOKEN;
+let lsDirty = false;
+function saveState() {
+  lsDirty = false;
+  try {
+    const items = {};
+    for (const it of files) items[it.fid] = { name: it.name, size: it.size, lastModified: it.lastModified, sessionId: it.sessionId, state: it.state === 'done' ? 'done' : 'pending', offset: it.offset };
+    localStorage.setItem(LS_KEY, JSON.stringify({ who: whoEl.value || '', items }));
+  } catch (e) { /* storage unavailable (private mode etc.) — uploads still work, just no reload-resume */ }
+}
+function markDirty() { lsDirty = true; }
+setInterval(() => { if (lsDirty) saveState(); }, 2000);
+window.addEventListener('beforeunload', () => { if (lsDirty) saveState(); });
+function loadState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (data.who && !whoEl.value) whoEl.value = data.who;
+    for (const fid of Object.keys(data.items || {})) {
+      const s = data.items[fid];
+      files.push(mkItem({ fid, name: s.name, size: s.size, lastModified: s.lastModified, file: null,
+        state: s.state === 'done' ? 'done' : 'needs-file', sessionId: s.sessionId || null, offset: s.offset || 0 }));
+    }
+    if (files.length) { for (const it of files) buildRow(it); updateCounter(); go.disabled = false; }
+  } catch (e) { /* corrupted state — start clean */ }
+}
+
+/* ---------------- file list + rows ---------------- */
+function mkItem(o) {
+  return { fid: o.fid, name: o.name, size: o.size, lastModified: o.lastModified || 0, file: o.file || null,
+    state: o.state || 'queued', sessionId: o.sessionId || null, offset: o.offset || 0,
+    partSize: DEFAULT_PART, totalParts: 0, doneParts: new Set(), signCache: new Map(), finishing: false,
+    row: null, statusEl: null, barEl: null };
+}
+function buildRow(it) {
+  const d = document.createElement('div'); d.className = 'file';
+  const line = document.createElement('div');
+  line.appendChild(document.createTextNode(it.name + ' — '));
+  const st = document.createElement('span'); line.appendChild(st);
+  const barWrap = document.createElement('div'); barWrap.className = 'bar';
+  const bar = document.createElement('div'); barWrap.appendChild(bar);
+  d.appendChild(line); d.appendChild(barWrap);
+  list.appendChild(d);
+  it.row = d; it.statusEl = st; it.barEl = bar;
+  updateRow(it);
+}
+function stateText(it) {
+  const pct = it.size ? Math.floor(100 * it.offset / it.size) : 0;
+  if (it.state === 'done') return ['✓ uploaded', 'ok'];
+  if (it.state === 'error') return ['failed — tap Upload to resume', 'err'];
+  if (it.state === 'uploading') return [pct + '%', ''];
+  if (it.state === 'needs-file') return ['pick this file again to resume', ''];
+  return ['ready', ''];
+}
+function updateRow(it) {
+  if (!it.row) return;
+  const [txt, cls] = stateText(it);
+  it.statusEl.textContent = txt;
+  it.statusEl.className = cls;
+  it.barEl.style.width = (it.size ? Math.floor(100 * it.offset / it.size) : 0) + '%';
+}
+function updateCounter() {
+  const total = files.length;
+  const done = files.filter(f => f.state === 'done').length;
+  const failed = files.filter(f => f.state === 'error').length;
+  counter.style.display = total ? 'block' : 'none';
+  countText.textContent = done + ' of ' + total + ' done' + (failed ? ' • ' + failed + ' failed' : '');
+  const now = files.filter(f => f.state === 'uploading').map(f => f.name);
+  nowText.textContent = now.length ? 'Uploading: ' + now.join(', ') : (running ? 'Working…' : '');
+}
+function setState(it, s) { it.state = s; updateRow(it); updateCounter(); markDirty(); }
 
 drop.addEventListener('click', () => pick.click());
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); });
 pick.addEventListener('change', () => addFiles(pick.files));
+whoEl.addEventListener('change', markDirty);
 
 function addFiles(fl) {
-  for (const f of fl) files.push({ file: f, state: 'queued', sessionId: null, offset: 0, partSize: DEFAULT_PART, totalParts: 0, doneParts: new Set(), signCache: new Map(), directFailed: false, finishing: false });
-  render(); go.disabled = files.length === 0;
+  for (const f of fl) {
+    const fid = fidOf(f.name, f.size, f.lastModified);
+    const existing = files.find(x => x.fid === fid);
+    if (existing) {
+      existing.file = f;
+      if (existing.state === 'needs-file') setState(existing, existing.sessionId ? 'queued' : 'queued');
+      updateRow(existing);
+    } else {
+      const it = mkItem({ fid, name: f.name, size: f.size, lastModified: f.lastModified, file: f });
+      files.push(it); buildRow(it);
+    }
+  }
+  updateCounter(); markDirty();
+  go.disabled = files.length === 0;
 }
-function render() {
-  list.innerHTML = '';
-  files.forEach((it, i) => {
-    const d = document.createElement('div'); d.className = 'file';
-    const pct = it.file.size ? Math.floor(100 * it.offset / it.file.size) : 0;
-    d.innerHTML = '<div>' + escapeHtml(it.file.name) + ' — <span class="' +
-      (it.state === 'done' ? 'ok' : it.state === 'error' ? 'err' : '') + '">' +
-      (it.state === 'done' ? '✓ uploaded' : it.state === 'error' ? 'failed — tap Upload to resume' : it.state === 'uploading' ? pct + '%' : 'ready') +
-      '</span></div><div class="bar"><div style="width:' + pct + '%"></div></div>';
-    list.appendChild(d);
-  });
-}
-function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ---------------- API with retry ---------------- */
 async function api(path, opts) {
   const res = await fetch(path, { ...opts, headers: { 'x-upload-token': TOKEN, ...(opts && opts.headers || {}) } });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || ('HTTP ' + res.status));
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
+function retryable(e) {
+  if (e instanceof TypeError) return true;            // network drop
+  if (!e.status) return true;                          // unknown — be generous
+  if (e.status === 429 || e.status >= 500) return true;
+  return false;
+}
+async function withRetry(label, fn, tries = MAX_TRIES) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      if (!retryable(e) || attempt === tries - 1) throw e;
+      let wait = Math.min(1000 * Math.pow(2, attempt), 20000);
+      if (e.status === 429) wait = Math.max(wait, 5000 * (attempt + 1)); // rate limit: back right off
+      await sleep(wait);
+    }
+  }
+  throw lastErr;
+}
 
+/* ---------------- sessions ---------------- */
 function partRange(it, n) { // n is 1-based
   const start = (n - 1) * it.partSize;
   return { start, end: Math.min(start + it.partSize, it.file.size) };
@@ -97,26 +225,40 @@ function syncOffset(it) { // confirmed bytes = sizes of the parts B2 holds
   for (const p of it.doneParts) { const r = partRange(it, p); n += r.end - r.start; }
   it.offset = n;
 }
-
+async function initSession(it) {
+  const who = whoEl.value.trim() || 'crew';
+  const init = await withRetry('init', () => api('/u/api/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: it.name, size: it.size, mimeType: it.file ? it.file.type : '', uploader: who }) }));
+  it.sessionId = init.id;
+  it.partSize = init.partSize || DEFAULT_PART;
+  it.doneParts = new Set();
+  markDirty();
+}
+async function getStatus(it) {
+  return withRetry('status', () => api('/u/api/status/' + it.sessionId));
+}
+// Returns true when the file still needs bytes moved; false when B2
+// already holds the completed file. Handles a forgotten session
+// (404) by starting a fresh one.
 async function ensureSession(it) {
-  const who = document.getElementById('who').value.trim() || 'crew';
-  if (!it.sessionId) {
-    const init = await api('/u/api/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: it.file.name, size: it.file.size, mimeType: it.file.type, uploader: who }) });
-    it.sessionId = init.id;
-    it.partSize = init.partSize || DEFAULT_PART;
-    it.doneParts = new Set();
-  } else {
-    const st = await api('/u/api/status/' + it.sessionId);
-    if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return false; }
-    it.partSize = st.partSize || it.partSize || DEFAULT_PART;
-    it.doneParts = new Set(st.partNumbers || []);
+  if (it.sessionId) {
+    try {
+      const st = await getStatus(it);
+      if (st.complete) { it.offset = it.size; return false; }
+      it.partSize = st.partSize || it.partSize || DEFAULT_PART;
+      it.doneParts = new Set(st.partNumbers || []);
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      it.sessionId = null; // server forgot it (should not happen with persisted sessions) — start fresh
+    }
   }
-  it.totalParts = Math.max(1, Math.ceil(it.file.size / it.partSize));
+  if (!it.sessionId) await initSession(it);
+  it.totalParts = Math.max(1, Math.ceil(it.size / it.partSize));
   syncOffset(it);
   return true;
 }
 
+/* ---------------- direct-to-B2 path ---------------- */
 async function signedUrl(it, n) {
   if (it.signCache.has(n)) return it.signCache.get(n);
   const wanted = [];
@@ -124,121 +266,146 @@ async function signedUrl(it, n) {
     if (!it.doneParts.has(k) && !it.signCache.has(k)) wanted.push(k);
   }
   if (!wanted.includes(n)) wanted.unshift(n);
-  const r = await api('/u/api/sign-parts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: it.sessionId, partNumbers: wanted }) });
+  const r = await withRetry('sign', () => api('/u/api/sign-parts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: it.sessionId, partNumbers: wanted }) }));
   for (const k of Object.keys(r.urls)) it.signCache.set(Number(k), r.urls[k]);
   return it.signCache.get(n);
 }
-
-async function putPart(it, n) {
+async function putPartDirect(it, n) {
   const { start, end } = partRange(it, n);
   const blob = it.file.slice(start, end);
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const url = await signedUrl(it, n);
-      // Plain fetch: NO extra headers — the presigned URL is the auth, and
-      // extra headers would widen the CORS preflight B2 must allow.
-      const res = await fetch(url, { method: 'PUT', body: blob });
-      if (res.status === 403 && attempt === 0) { it.signCache.delete(n); continue; } // stale signature: re-sign once
-      if (!res.ok) throw new Error('B2 HTTP ' + res.status);
-      return;
-    } catch (e) {
-      if (e instanceof TypeError) throw e; // network/CORS failure: direct path is broken for this file
-      lastErr = e;
-      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-    }
+    const url = await signedUrl(it, n);
+    // Plain fetch: NO extra headers — the presigned URL is the auth, and
+    // extra headers would widen the CORS preflight B2 must allow.
+    const res = await fetch(url, { method: 'PUT', body: blob });
+    if (res.status === 403 && attempt === 0) { it.signCache.delete(n); continue; } // stale signature: re-sign once
+    if (!res.ok) { lastErr = new Error('B2 HTTP ' + res.status); lastErr.status = res.status; await sleep(1000 * (attempt + 1)); continue; }
+    return;
   }
   throw lastErr || new Error('part upload failed');
 }
-
-async function finishFile(it) {
-  if (it.state === 'done' || it.finishing) return;
-  it.finishing = true;
-  try {
-    const r = await api('/u/api/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: it.sessionId }) });
-    if (r.complete) { it.state = 'done'; it.offset = it.file.size; }
-  } finally { it.finishing = false; render(); }
-}
-
-// Legacy fallback: chunks proxied through the site server, sequentially.
-// The server appends parts in order, so this is only safe when the parts
-// already on B2 form a prefix (1..k) — with CORS fully blocked nothing
-// lands, the common case. A non-prefix set means a mid-run network drop:
-// abort and restart the file clean rather than assemble a corrupt file.
-async function uploadLegacy(it) {
-  let st = await api('/u/api/status/' + it.sessionId);
-  if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return; }
-  const landed = (st.partNumbers || []).slice().sort((a, b) => a - b);
-  const isPrefix = landed.every((n, i) => n === i + 1);
-  if (!isPrefix) {
-    await api('/u/api/abort', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.sessionId }) });
-    it.sessionId = null; it.doneParts = new Set(); it.signCache = new Map();
-    await ensureSession(it);
-    st = { offset: 0 };
-  }
-  let offset = st.offset;
-  it.state = 'uploading'; render();
-  while (offset < it.file.size) {
-    const end = Math.min(offset + LEGACY_CHUNK, it.file.size);
-    const buf = await it.file.slice(offset, end).arrayBuffer();
-    const r = await api('/u/api/chunk/' + it.sessionId, { method: 'PUT', headers: { 'x-chunk-start': String(offset) }, body: buf });
-    offset = r.offset;
-    it.offset = offset;
-    render();
-    if (r.complete) break;
-  }
-  it.state = 'done'; it.offset = it.file.size; render();
-}
-
-async function runUploads() {
-  const queue = []; // global across files: { it, n }
-  for (const it of files) {
-    if (it.state === 'done') continue;
-    it.state = 'uploading'; it.directFailed = false; it.signCache = new Map();
+// Returns 'done' | 'relay' — 'relay' means the direct path is broken
+// at the network level and the caller should relay this file.
+async function uploadDirect(it) {
+  for (let n = 1; n <= it.totalParts; n++) {
+    if (it.doneParts.has(n)) continue;
     try {
-      const live = await ensureSession(it);
-      if (!live) continue; // B2 says this session already completed
-    } catch (e) { it.state = 'error'; render(); continue; }
-    render();
-    for (let n = 1; n <= it.totalParts; n++) if (!it.doneParts.has(n)) queue.push({ it, n });
-    if (it.doneParts.size >= it.totalParts) {
-      try { await finishFile(it); } catch (e) { it.state = 'error'; render(); }
+      await putPartDirect(it, n);
+    } catch (e) {
+      if (e instanceof TypeError) { directMode = 'relay'; return 'relay'; } // CORS/network: direct is broken, batch-wide
+      throw e;
     }
+    if (directMode === 'unknown') directMode = 'direct';
+    it.doneParts.add(n); syncOffset(it); updateRow(it); markDirty();
   }
-  async function worker() {
-    while (queue.length) {
-      const t = queue.shift();
-      const it = t.it;
-      if (it.state === 'done' || it.directFailed || it.state === 'error') continue;
+  return 'done';
+}
+
+/* ---------------- relay path (through the site server) ---------------- */
+// The server appends parts in order, so relay continuation is only
+// safe when the parts already on B2 form a prefix (1..k) — true when
+// CORS is fully blocked (nothing landed) and true for our sequential
+// direct path. A non-prefix set aborts and restarts the file clean.
+async function uploadRelay(it) {
+  for (let restart = 0; restart < 3; restart++) {
+    let st = await getStatus(it);
+    if (st.complete) { it.offset = it.size; return; }
+    const landed = (st.partNumbers || []).slice().sort((a, b) => a - b);
+    const isPrefix = landed.every((n, i) => n === i + 1);
+    if (!isPrefix) {
+      await withRetry('abort', () => api('/u/api/abort', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.sessionId }) }));
+      it.sessionId = null; it.doneParts = new Set(); it.signCache = new Map();
+      await initSession(it);
+      it.totalParts = Math.max(1, Math.ceil(it.size / it.partSize));
+      continue;
+    }
+    let offset = st.offset;
+    it.offset = offset; updateRow(it);
+    let chunkFailures = 0;
+    while (offset < it.size) {
+      const end = Math.min(offset + LEGACY_CHUNK, it.size);
       try {
-        await putPart(it, t.n);
-        it.doneParts.add(t.n); syncOffset(it); render();
-        if (it.doneParts.size >= it.totalParts) await finishFile(it);
+        const buf = await it.file.slice(offset, end).arrayBuffer();
+        const r = await api('/u/api/chunk/' + it.sessionId, { method: 'PUT', headers: { 'x-chunk-start': String(offset) }, body: buf });
+        if (typeof r.offset !== 'number') throw new Error('bad chunk response');
+        if (r.offset <= offset && !r.complete) throw new Error('server did not advance the upload');
+        offset = r.offset;
+        it.offset = offset; updateRow(it); markDirty();
+        chunkFailures = 0;
+        if (r.complete) break;
       } catch (e) {
-        if (e instanceof TypeError) it.directFailed = true; // direct B2 path broken -> legacy fallback below
-        else it.state = 'error';
-        render();
+        if (!retryable(e)) throw e;
+        chunkFailures++;
+        if (chunkFailures > 6) throw e;
+        await sleep(Math.min(1000 * Math.pow(2, chunkFailures - 1), 20000));
+        // Resync from the server's confirmed offset before retrying —
+        // the chunk may have landed even though the response was lost.
+        const st2 = await getStatus(it);
+        if (st2.complete) { it.offset = it.size; return; }
+        offset = st2.offset; it.offset = offset; updateRow(it);
       }
     }
+    return;
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  for (const it of files) {
-    if (it.directFailed && it.state !== 'done') {
-      try { await uploadLegacy(it); }
-      catch (e) { it.state = 'error'; render(); }
+  throw new Error('upload could not be reconciled with the server');
+}
+
+/* ---------------- per-file driver + queue ---------------- */
+async function finishFile(it) {
+  if (it.finishing) return;
+  it.finishing = true;
+  try {
+    const r = await withRetry('complete', () => api('/u/api/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: it.sessionId }) }));
+    if (r.complete) it.offset = it.size;
+  } finally { it.finishing = false; }
+}
+async function processFile(it) {
+  setState(it, 'uploading');
+  it.signCache = new Map();
+  const live = await ensureSession(it);
+  if (!live) { setState(it, 'done'); return; } // server says this file already completed
+  if (directMode !== 'relay') {
+    const how = await uploadDirect(it);
+    if (how === 'done') { await finishFile(it); setState(it, 'done'); return; }
+    // else: direct broke mid-file — fall through to relay for this file
+  }
+  await uploadRelay(it);
+  // Relay completes server-side on the final chunk; confirm via status.
+  const st = await getStatus(it);
+  if (!st.complete) await finishFile(it);
+  it.offset = it.size;
+  setState(it, 'done');
+}
+async function runUploads() {
+  const pending = files.filter(f => f.file && f.state !== 'done');
+  for (const it of pending) if (it.state === 'error' || it.state === 'needs-file') setState(it, 'queued');
+  let idx = 0;
+  async function worker() {
+    while (idx < pending.length) {
+      const it = pending[idx++];
+      if (it.state === 'done') continue;
+      try { await processFile(it); }
+      catch (e) { setState(it, 'error'); }
+      updateCounter();
     }
   }
+  await Promise.all(Array.from({ length: FILE_CONCURRENCY }, worker));
 }
 
 go.addEventListener('click', async () => {
+  if (running) return;
+  running = true;
   go.disabled = true;
   document.getElementById('done').style.display = 'none';
   try { await runUploads(); }
-  finally { go.disabled = false; }
+  finally { running = false; go.disabled = files.length === 0; updateCounter(); saveState(); }
   if (files.length && files.every(f => f.state === 'done')) document.getElementById('done').style.display = 'block';
 });
+
+loadState();
 </script>
 </body>
 </html>

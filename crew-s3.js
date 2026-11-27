@@ -71,7 +71,7 @@ class S3MultipartTransport {
     this.keyId = keyId;
     this.applicationKey = applicationKey;
     this.region = region || S3MultipartTransport.regionFromEndpoint(this.endpoint);
-    this.mode = 'b2-s3';
+    this.mode = 's3';
   }
 
   static regionFromEndpoint(endpoint) {
@@ -79,8 +79,30 @@ class S3MultipartTransport {
       const host = new URL(endpoint).hostname;
       const m = host.match(/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/i);
       if (m) return m[1];
+      const a = host.match(/^s3[.-]([a-z0-9-]+)\.amazonaws\.com$/i);
+      if (a) return a[1];
+      if (host === 's3.amazonaws.com') return 'us-east-1';
+      if (/\.amazonaws\.com$/i.test(host)) return 'us-east-1';
     } catch {}
     return 'us-east-005';
+  }
+
+  // Addressing: Amazon S3 gets virtual-hosted style
+  // (<bucket>.s3.<region>.amazonaws.com/<key>) — the modern default
+  // that works in every AWS region. Backblaze B2 and local mocks keep
+  // path style (<endpoint>/<bucket>/<key>), which B2 documents.
+  isAws() {
+    try { return /\.amazonaws\.com$/i.test(new URL(this.endpoint).hostname); } catch { return false; }
+  }
+  objectTarget(key) {
+    const ep = new URL(this.endpoint);
+    if (this.isAws()) {
+      const host = `${this.bucket}.${ep.hostname}`;
+      const path = `/${encodeKey(key)}`;
+      return { host, path, base: `${ep.protocol}//${host}` };
+    }
+    const path = `/${enc(this.bucket)}/${encodeKey(key)}`;
+    return { host: ep.host, path, base: this.endpoint };
   }
 
   // One signed S3 request. body is a Buffer or string (may be empty).
@@ -90,9 +112,10 @@ class S3MultipartTransport {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const dateStamp = amzDate.slice(0, 8);
-    const host = new URL(this.endpoint).host;
+    const target = this.objectTarget(key);
+    const host = target.host;
 
-    const path = `/${enc(this.bucket)}/${encodeKey(key)}`;
+    const path = target.path;
     const qs = Object.keys(query).sort().map((k) => `${enc(k)}=${enc(query[k])}`).join('&');
     const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
     const canonicalHeaders =
@@ -108,7 +131,7 @@ class S3MultipartTransport {
     const kSigning = hmac(kService, 'aws4_request');
     const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
 
-    const url = `${this.endpoint}${path}${qs ? '?' + qs : ''}`;
+    const url = `${target.base}${path}${qs ? '?' + qs : ''}`;
     const res = await fetch(url, {
       method,
       headers: {
@@ -255,8 +278,9 @@ class S3MultipartTransport {
     const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const dateStamp = amzDate.slice(0, 8);
     const scope = `${dateStamp}/${this.region}/s3/aws4_request`;
-    const host = new URL(this.endpoint).host;
-    const path = `/${enc(this.bucket)}/${encodeKey(session.key)}`;
+    const target = this.objectTarget(session.key);
+    const host = target.host;
+    const path = target.path;
     const query = {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${this.keyId}/${scope}`,
@@ -270,7 +294,7 @@ class S3MultipartTransport {
     const canonicalRequest = ['PUT', path, qs, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n');
     const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
     const signature = crypto.createHmac('sha256', this._signingKey(dateStamp)).update(stringToSign, 'utf8').digest('hex');
-    return `${this.endpoint}${path}?${qs}&X-Amz-Signature=${signature}`;
+    return `${target.base}${path}?${qs}&X-Amz-Signature=${signature}`;
   }
 
   // Complete a direct-path session from B2's OWN part list — the etags the
@@ -294,19 +318,28 @@ class S3MultipartTransport {
 }
 
 function createStorage(env) {
-  const missing = ['B2_S3_ENDPOINT', 'B2_KEY_ID', 'B2_APPLICATION_KEY'].filter((k) => !env[k]);
+  // Amazon S3 is the primary backend (Nov 27 2026): S3_* env wins;
+  // the legacy B2_* names remain as fallback so the Backblaze config
+  // keeps working until the Render env is flipped (ops/S3-GO-LIVE.md).
+  const endpoint = env.S3_ENDPOINT || env.B2_S3_ENDPOINT;
+  const keyId = env.S3_KEY_ID || env.B2_KEY_ID;
+  const applicationKey = env.S3_SECRET || env.B2_APPLICATION_KEY;
+  const missing = [];
+  if (!endpoint) missing.push('S3_ENDPOINT (or B2_S3_ENDPOINT)');
+  if (!keyId) missing.push('S3_KEY_ID (or B2_KEY_ID)');
+  if (!applicationKey) missing.push('S3_SECRET (or B2_APPLICATION_KEY)');
   if (missing.length) {
     throw new Error(
-      `Missing B2 config: ${missing.join(', ')} — set them from the Backblaze B2 ` +
-      'application key created for this service (see README go-live steps).'
+      `Missing storage config: ${missing.join(', ')} — set them from the ` +
+      'storage account created for this service (see ops/S3-GO-LIVE.md).'
     );
   }
   const transport = new S3MultipartTransport({
-    endpoint: env.B2_S3_ENDPOINT,
-    bucket: env.B2_BUCKET || 'crewuploads',
-    keyId: env.B2_KEY_ID,
-    applicationKey: env.B2_APPLICATION_KEY,
-    region: env.B2_S3_REGION || undefined,
+    endpoint,
+    bucket: env.S3_BUCKET || env.B2_BUCKET || 'crewuploads',
+    keyId,
+    applicationKey,
+    region: env.S3_REGION || env.B2_S3_REGION || undefined,
   });
   return { transport, mode: transport.mode, bucket: transport.bucket };
 }
