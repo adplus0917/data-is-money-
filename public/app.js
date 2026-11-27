@@ -106,7 +106,7 @@ const API = {
     return this.post("/api/submissions", { answers, contact, manifest: L().man.map((_, i) => a.man.includes(i)), lang, ...(bookingId ? { booking_id: bookingId } : {}) });
   },
   book(body) { return this.post("/api/bookings", body); },
-  lead(body) { return this.post("/api/leads", body); },
+  lead(body) { return this.post("/api/leads", { ...body, ...(window.__dpTurnstileToken ? { turnstileToken: window.__dpTurnstileToken } : {}) }); },
   async upload(folio, token, file) {
     const fd = new FormData(); fd.append("files", file);
     const r = await fetch(`/api/submissions/${encodeURIComponent(folio)}/samples`, { method: "POST", headers: { "X-Upload-Token": token }, body: fd });
@@ -667,6 +667,27 @@ document.addEventListener("submit", async e => {
 document.addEventListener("dragover", e => { const d = e.target.closest("#drop"); if (d) { e.preventDefault(); d.classList.add("over"); } });
 document.addEventListener("dragleave", e => { const d = e.target.closest("#drop"); if (d) d.classList.remove("over"); });
 document.addEventListener("drop", e => { const d = e.target.closest("#drop"); if (d) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+
+/* Turnstile hook (Nov 27 2026): COMPLETELY INERT unless the server reports
+   a site key via /api/config/public. No key configured → this fetches the
+   config, sees null, and does nothing: no script loaded, no widget, no
+   token, funnel behaves exactly as before. With a key, it loads the
+   Cloudflare script, renders the widget into #turnstile-slot (or a slot it
+   adds to the page), and API.lead attaches the token automatically. */
+(async () => {
+  try {
+    const cfg = await (await fetch("/api/config/public")).json();
+    if (!cfg.turnstileSiteKey) return;
+    window.__dpTurnstileReady = new Promise(resolve => { window.__dpTurnstileOnload = resolve; });
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=__dpTurnstileOnload&render=explicit";
+    s.async = true; document.head.appendChild(s);
+    await window.__dpTurnstileReady;
+    let slot = document.getElementById("turnstile-slot");
+    if (!slot) { slot = document.createElement("div"); slot.id = "turnstile-slot"; document.body.appendChild(slot); }
+    window.turnstile.render(slot, { sitekey: cfg.turnstileSiteKey, callback: t => { window.__dpTurnstileToken = t; } });
+  } catch (e) { /* bot gate unavailable — server stays the authority */ }
+})();
 
 render();
 })();

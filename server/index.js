@@ -5,6 +5,7 @@
 // ============================================================
 const path = require("path");
 const crypto = require("crypto");
+const dns = require("dns").promises;
 const fs = require("fs");
 const express = require("express");
 const multer = require("multer");
@@ -32,7 +33,10 @@ const STAGING_ORIGIN = (() => {
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", [
     "default-src 'self'",
-    "script-src 'self'",
+    // Turnstile origins are allowed ONLY when a site key is configured;
+    // with no key set the CSP is byte-identical to before (gate inert).
+    "script-src 'self'" + (process.env.TURNSTILE_SITE_KEY ? " https://challenges.cloudflare.com" : ""),
+    ...(process.env.TURNSTILE_SITE_KEY ? ["frame-src https://challenges.cloudflare.com"] : []),
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
@@ -231,12 +235,57 @@ app.post("/api/contact", limiter(20, 10 * 60e3), async (req, res) => {
    The gate ALSO writes the legacy contact_messages row (the client sends
    the same human-readable summary lines it always did, extended with the
    qualifier answers) so the panel's Messages tab is unchanged. */
+/* ---------- lead intake guards (Nov 27 2026, Miguel's reviewed package) ----------
+   Layer 2 email check: DNS MX lookup on the lead's domain, AFTER the
+   options.js format+TLD check (which stays first and untouched). Reject
+   ONLY on a definitive negative — ENOTFOUND, ENODATA, or an empty MX
+   list. A timeout (~3s cap) or any transient DNS error ACCEPTS the lead
+   and logs, so a DNS hiccup never costs a real lead.
+   Turnstile: verified ONLY when TURNSTILE_SECRET_KEY is set in env;
+   with no key configured the check is skipped entirely (inert). */
+async function emailDomainVerdict(email) {
+  const domain = String(email || "").split("@")[1];
+  if (!domain) return "bad";
+  let timer;
+  try {
+    const mx = await Promise.race([
+      dns.resolveMx(domain),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error("mx timeout"), { code: "ETIMEOUT" })), 3000); }),
+    ]);
+    return Array.isArray(mx) && mx.length > 0 ? "ok" : "bad";
+  } catch (e) {
+    if (e && (e.code === "ENOTFOUND" || e.code === "ENODATA")) return "bad";
+    return "unknown";
+  } finally { clearTimeout(timer); }
+}
+async function turnstileOk(token, ip) {
+  const secret = process.env.TURNSTILE_SECRET_KEY || "";
+  if (!secret) return true; // gate unset — inert by design
+  if (!token) return false;
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ secret, response: String(token), remoteip: ip || "" }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const j = await r.json().catch(() => ({}));
+    return j.success === true;
+  } catch (e) { console.error("turnstile verify failed", e); return false; }
+}
+// Public runtime config for the funnel pages (site key only — never secrets).
+app.get("/api/config/public", (req, res) => res.json({ turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || null }));
+
 app.post("/api/leads", limiter(20, 10 * 60e3), async (req, res) => {
   const b = req.body || {};
   const track = b.track == null || b.track === "" ? null : (opt.TRACKS.includes(b.track) ? b.track : undefined);
   if (track === undefined) return res.status(400).json({ error: "unknown track" });
   const chk = opt.checkLead(b, { requireQualifiers: true });
   if (!chk.ok) return res.status(400).json({ error: chk.error, ...(chk.error_code ? { error_code: chk.error_code } : {}) });
+  if (!(await turnstileOk(b.turnstileToken, req.ip))) return res.status(403).json({ error: "Bot check failed. Please refresh and try again." });
+  const verdict = await emailDomainVerdict(chk.lead.email);
+  if (verdict === "bad") return res.status(400).json({ error_code: "email_domain_invalid", error: "That email domain does not exist or cannot receive email. Please check for typos." });
+  if (verdict === "unknown") console.error("mx check inconclusive, accepting lead", chk.lead.email);
   try {
     const row = await db.createLead({ ...chk.lead, source: "site_gate", lang: b.lang === "es" ? "es" : "en" });
     const message = opt.str(b.message, 2000);
