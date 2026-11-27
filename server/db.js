@@ -129,7 +129,7 @@ function postgres(url) {
         `SELECT l.*, b.folio AS bk_folio, b.appt_date::text AS bk_date, b."window" AS bk_window, b.profile AS bk_profile,
                 s.folio AS sub_folio, s.estimate_low AS sub_low, s.estimate_high AS sub_high
          FROM leads l
-         LEFT JOIN bookings b ON b.id = l.booking_id
+         LEFT JOIN bookings b ON b.id = l.booking_id AND b.status <> 'cancelled'
          LEFT JOIN LATERAL (SELECT folio, estimate_low, estimate_high FROM submissions
                             WHERE lower(email) = lower(l.email) ORDER BY created_at DESC LIMIT 1) s ON true
          ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY l.created_at DESC LIMIT 5000`, v);
@@ -447,7 +447,7 @@ function jsonFile(dir) {
       return d.leads.slice().reverse().filter(l =>
         (!f.status || l.status === f.status) &&
         (f.unassigned ? !l.assigned_to : !f.assigned_to || l.assigned_to === f.assigned_to)).map(l => {
-        const bk = d.bookings.find(b => b.id === l.booking_id) || null;
+        const bk = d.bookings.find(b => b.id === l.booking_id && b.status !== "cancelled") || null;
         const sub = d.submissions.slice().reverse().find(s => (s.email || "").toLowerCase() === l.email.toLowerCase()) || null;
         const prof = bk && bk.profile ? bk.profile : {};
         return { ...l,
@@ -456,7 +456,7 @@ function jsonFile(dir) {
             folio: (bk && bk.folio) || (sub && sub.folio) || null,
             worth_low: prof.estimate_low != null ? prof.estimate_low : (sub ? sub.estimate_low : null),
             worth_high: prof.estimate_high != null ? prof.estimate_high : (sub ? sub.estimate_high : null),
-            booked: !!l.booking_id,
+            booked: !!bk || l.status === "booked",
             appt_date: bk ? bk.appt_date : null,
             window: bk ? bk.window : null,
           } };
