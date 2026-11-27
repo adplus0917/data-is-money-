@@ -458,6 +458,12 @@ CREATE INDEX IF NOT EXISTS leads_email_idx ON leads (lower(email));
 -- by tier (10s first). NULL only on rows from before this column; the
 -- db layer computes those on read so the panel never shows a blank.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score integer;
+-- CRM query indexes (Nov 27 2026, from Miguel's reviewed upgrade package,
+-- adapted to the real schema: status already exists as text, score column
+-- is lead_score; created_at DESC is covered by leads_created_idx above).
+CREATE INDEX IF NOT EXISTS leads_email_plain_idx ON leads (email);
+CREATE INDEX IF NOT EXISTS leads_status_idx ON leads (status);
+CREATE INDEX IF NOT EXISTS leads_score_idx ON leads (lead_score DESC);
 -- Qualifier answers on the booking row as well (Nov 26 2026).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS industry text;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS data_authority text;
