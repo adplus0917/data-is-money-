@@ -80,6 +80,9 @@ function role(name) {
     presignPut(Key, contentType, expiresIn = 3600) {
       return getSignedUrl(client, new PutObjectCommand({ Bucket, Key, ContentType: contentType, ...sse }), { expiresIn });
     },
+    presignGet(Key, expiresIn = 300) {
+      return getSignedUrl(client, new GetObjectCommand({ Bucket, Key }), { expiresIn });
+    },
   };
   return (cache[name] = api);
 }

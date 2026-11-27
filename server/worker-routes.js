@@ -172,7 +172,7 @@ module.exports = function mount(app, { db, limiter, log } = {}) {
       const { rows: placed } = await pool.query(
         `SELECT id, folder, name, size, created_at FROM folder_files WHERE folio = $1 ORDER BY folder, created_at`, [folio]);
       const { rows: masters } = await pool.query(
-        `SELECT id, name, size, sha256_master FROM upload_files WHERE folio = $1 AND status = 'ingested' ORDER BY id`, [folio]);
+        `SELECT id, original_name AS name, size_bytes AS size, sha256_master FROM upload_files WHERE folio = $1 AND status = 'ingested' ORDER BY id`, [folio]);
       const folders = FOLDERS.map((folder) => ({
         folder,
         locked: !OPENABLE.has(folder),
@@ -201,7 +201,7 @@ module.exports = function mount(app, { db, limiter, log } = {}) {
       if (!FOLDERS.includes(folder)) return res.status(400).json({ error: "unknown folder" });
       if (!OPENABLE.has(folder) || source === "vault") {
         const { rows } = source === "vault"
-          ? await pool.query(`SELECT name FROM upload_files WHERE id = $1 AND folio = $2`, [file_id, folio])
+          ? await pool.query(`SELECT original_name AS name FROM upload_files WHERE id = $1 AND folio = $2`, [file_id, folio])
           : await pool.query(`SELECT name FROM folder_files WHERE id = $1 AND folio = $2`, [file_id, folio]);
         await accessLog(req, req.worker, {
           action: "open_refused_master", folio, folder, file_id,
