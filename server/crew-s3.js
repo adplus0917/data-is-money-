@@ -31,9 +31,17 @@ const crypto = require('crypto');
 // Non-final chunks must align to 256 KiB (kept from the Drive design so the
 // browser page and API contract are unchanged), and — B2/S3 multipart rule —
 // every part except the last must be at least 5 MiB. The browser sends
-// 8 MiB chunks, so both rules hold in practice.
+// 8 MiB chunks on the legacy proxied path, so both rules hold in practice.
 const CHUNK_GRANULARITY = 256 * 1024;
 const MIN_PART_BYTES = 5 * 1024 * 1024;
+
+// Direct-to-B2 path (Nov 27 2026 speed fix): the browser uploads parts
+// straight to B2 with presigned URLs — 16 MiB parts (fewer round trips than
+// the legacy 8 MiB proxied chunks; 16 MiB × 10,000 S3 part limit = 160 GiB,
+// far above MAX_FILE_BYTES). The server only creates the multipart session,
+// signs part URLs, and completes from B2's own part list.
+const DIRECT_PART_BYTES = 16 * 1024 * 1024;
+const PRESIGN_EXPIRES_SECONDS = 3600;
 
 function sha256hex(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -172,14 +180,14 @@ class S3MultipartTransport {
     };
   }
 
-  // Resume support: ask B2 which parts it already has; offset = sum of part
-  // sizes. If the upload was already completed, B2 answers NoSuchUpload and
-  // we report complete (the server drops finished sessions, so this is a
-  // belt-and-braces path for a status call racing the final chunk).
-  async sessionOffset(session, total) {
-    try {
-      const { text } = await this.request('GET', session.key, { query: { uploadId: session.uploadId } });
-      const parts = [];
+  // List every part B2 already holds for this session (paginated).
+  async listParts(session) {
+    const parts = [];
+    let marker = null;
+    for (;;) {
+      const query = { uploadId: session.uploadId };
+      if (marker != null) query['part-number-marker'] = String(marker);
+      const { text } = await this.request('GET', session.key, { query });
       const re = /<Part>([\s\S]*?)<\/Part>/g;
       let m;
       while ((m = re.exec(text))) {
@@ -189,7 +197,21 @@ class S3MultipartTransport {
           size: parseInt(xmlTag(m[1], 'Size'), 10),
         });
       }
-      parts.sort((a, b) => a.partNumber - b.partNumber);
+      if (xmlTag(text, 'IsTruncated') !== 'true') break;
+      marker = xmlTag(text, 'NextPartNumberMarker');
+      if (marker == null) break;
+    }
+    parts.sort((a, b) => a.partNumber - b.partNumber);
+    return parts;
+  }
+
+  // Resume support: ask B2 which parts it already has; offset = sum of part
+  // sizes. If the upload was already completed, B2 answers NoSuchUpload and
+  // we report complete (the server drops finished sessions, so this is a
+  // belt-and-braces path for a status call racing the final chunk).
+  async sessionOffset(session, total) {
+    try {
+      const parts = await this.listParts(session);
       session.parts = parts;
       session.received = parts.reduce((n, p) => n + p.size, 0);
       return { complete: false, offset: session.received };
@@ -199,6 +221,66 @@ class S3MultipartTransport {
       }
       throw err;
     }
+  }
+
+  // Same as sessionOffset, plus the part numbers present — the direct-path
+  // page needs them to skip parts that already landed and re-sign the rest.
+  async sessionParts(session, total) {
+    try {
+      const parts = await this.listParts(session);
+      session.parts = parts;
+      session.received = parts.reduce((n, p) => n + p.size, 0);
+      return { complete: false, offset: session.received, partNumbers: parts.map((p) => p.partNumber) };
+    } catch (err) {
+      if (/NoSuchUpload/.test(err.message)) {
+        return { complete: true, offset: total, partNumbers: [], file: { key: session.key, bucket: this.bucket } };
+      }
+      throw err;
+    }
+  }
+
+  _signingKey(dateStamp) {
+    const kDate = hmac('AWS4' + this.applicationKey, dateStamp);
+    const kRegion = hmac(kDate, this.region);
+    const kService = hmac(kRegion, 's3');
+    return hmac(kService, 'aws4_request');
+  }
+
+  // Presigned UploadPart URL (SigV4 query-string auth, UNSIGNED-PAYLOAD):
+  // the browser PUTs the part bytes straight to B2 with this URL — no data
+  // transits this server. Only "host" is signed, so the browser may send
+  // whatever Content-Type the file slice carries.
+  presignPart(session, partNumber, expiresSeconds = PRESIGN_EXPIRES_SECONDS) {
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const dateStamp = amzDate.slice(0, 8);
+    const scope = `${dateStamp}/${this.region}/s3/aws4_request`;
+    const host = new URL(this.endpoint).host;
+    const path = `/${enc(this.bucket)}/${encodeKey(session.key)}`;
+    const query = {
+      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+      'X-Amz-Credential': `${this.keyId}/${scope}`,
+      'X-Amz-Date': amzDate,
+      'X-Amz-Expires': String(expiresSeconds),
+      'X-Amz-SignedHeaders': 'host',
+      partNumber: String(partNumber),
+      uploadId: session.uploadId,
+    };
+    const qs = Object.keys(query).sort().map((k) => `${enc(k)}=${enc(query[k])}`).join('&');
+    const canonicalRequest = ['PUT', path, qs, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n');
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
+    const signature = crypto.createHmac('sha256', this._signingKey(dateStamp)).update(stringToSign, 'utf8').digest('hex');
+    return `${this.endpoint}${path}?${qs}&X-Amz-Signature=${signature}`;
+  }
+
+  // Complete a direct-path session from B2's OWN part list — the etags the
+  // browser saw are never trusted; the server asks B2 what actually landed.
+  async completeDirect(session) {
+    const parts = await this.listParts(session);
+    if (!parts.length) throw new Error('cannot complete: B2 holds no parts for this session');
+    session.parts = parts;
+    session.received = parts.reduce((n, p) => n + p.size, 0);
+    return this.complete(session);
   }
 
   // Best-effort cleanup for abandoned sessions (not wired to a timer; the
@@ -229,4 +311,4 @@ function createStorage(env) {
   return { transport, mode: transport.mode, bucket: transport.bucket };
 }
 
-module.exports = { createStorage, S3MultipartTransport, CHUNK_GRANULARITY, MIN_PART_BYTES };
+module.exports = { createStorage, S3MultipartTransport, CHUNK_GRANULARITY, MIN_PART_BYTES, DIRECT_PART_BYTES, PRESIGN_EXPIRES_SECONDS };

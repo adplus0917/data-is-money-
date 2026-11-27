@@ -5,10 +5,22 @@
 // ships inside this site's Render service).
 //
 // Everybody opens /u/<token> in any browser (no sign-in), picks or
-// drops photos, videos and files, and the files stream through this
-// server into Backblaze B2 via its S3-compatible multipart API
-// (server/crew-s3.js). Each token is ONE upload stream: the token
-// alone decides where files land — the sender chooses nothing.
+// drops photos, videos and files, and the files land in Backblaze B2
+// via its S3-compatible multipart API (server/crew-s3.js). Each token
+// is ONE upload stream: the token alone decides where files land —
+// the sender chooses nothing.
+//
+// SPEED FIX (Nov 27 2026): the original flow proxied every chunk
+// through this server (browser -> Render -> B2, one 8 MiB chunk at a
+// time, files strictly sequential) — two serial hops on a small
+// instance, painfully slow on phone uplinks. The page now uploads
+// DIRECT to B2: this server only creates the multipart session,
+// hands out short-lived presigned part URLs (/u/api/sign-parts), and
+// completes the session from B2's own part list (/u/api/complete).
+// The browser sends 16 MiB parts, up to 5 in parallel across files.
+// The legacy proxied chunk endpoint (/u/api/chunk) is kept as an
+// automatic fallback for browsers/networks where direct B2 PUTs fail
+// (e.g. bucket CORS not yet allowing the site origin).
 // Uploads land pre-sorted under the stream's company prefix +
 // purpose subfolder in the crewuploads bucket:
 //
@@ -24,8 +36,8 @@
 // offset.
 //
 // ISOLATION: routes live only under /u/ (page + health) and /u/api/
-// (init / chunk / status), so nothing here can shadow an existing
-// site route. If the token/B2 env is not configured, the module
+// (init / sign-parts / complete / abort / chunk / status), so nothing
+// here can shadow an existing site route. If the token/B2 env is not configured, the module
 // mounts DISABLED — every token behaves exactly like a bad token
 // (page 404, API 403) — and it can never take the site down.
 //
@@ -59,7 +71,7 @@
 // ============================================================
 const fs = require("fs");
 const path = require("path");
-const { createStorage, CHUNK_GRANULARITY, MIN_PART_BYTES } = require("./crew-s3");
+const { createStorage, CHUNK_GRANULARITY, MIN_PART_BYTES, DIRECT_PART_BYTES, PRESIGN_EXPIRES_SECONDS } = require("./crew-s3");
 
 const MAX_FILE_BYTES = parseInt(process.env.MAX_FILE_BYTES || String(15 * 1024 * 1024 * 1024), 10);
 const MAX_FILES = parseInt(process.env.MAX_FILES_PER_SESSION || "200", 10);
@@ -92,7 +104,9 @@ function buildState(env) {
   let storage;
   try { storage = createStorage(env); }
   catch (e) { console.error("crew-upload: disabled —", e.message); return { enabled: false }; }
-  return { enabled: true, companies, transport: storage.transport, mode: storage.mode, bucket: storage.bucket };
+  let endpointOrigin = null;
+  try { endpointOrigin = new URL(env.B2_S3_ENDPOINT).origin; } catch {}
+  return { enabled: true, companies, transport: storage.transport, mode: storage.mode, bucket: storage.bucket, endpointOrigin };
 }
 
 function readRaw(req) {
@@ -124,17 +138,21 @@ function escapeHtml(s) {
 }
 
 // The upload page is a single self-contained file with inline script
-// and styles; it needs its own CSP (see header note).
-const PAGE_CSP = [
-  "default-src 'self'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-].join("; ");
+// and styles; it needs its own CSP (see header note). connect-src also
+// allows the B2 endpoint origin so the page can PUT parts directly to
+// B2 with presigned URLs (the speed fix — see header note).
+function pageCsp(endpointOrigin) {
+  return [
+    "default-src 'self'",
+    "script-src 'unsafe-inline'",
+    "style-src 'unsafe-inline'",
+    "img-src 'self' data:",
+    `connect-src 'self'${endpointOrigin ? ` ${endpointOrigin}` : ""}`,
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+}
 
 module.exports = function mount(app, { limiter } = {}) {
   const state = buildState(process.env);
@@ -157,7 +175,7 @@ module.exports = function mount(app, { limiter } = {}) {
   const page = (req, res) => {
     const company = state.enabled ? state.companies.get(req.params.token) : null;
     if (!company) return res.status(404).json({ error: "not found" });
-    res.setHeader("Content-Security-Policy", PAGE_CSP);
+    res.setHeader("Content-Security-Policy", pageCsp(state.endpointOrigin));
     const html = pageTemplate.split("{{STREAM_LABEL}}").join(escapeHtml(company.label));
     res.type("html").send(html);
   };
@@ -184,23 +202,83 @@ module.exports = function mount(app, { limiter } = {}) {
       const handle = await state.transport.initSession({ key, size, mimeType: body.mimeType });
       const id = `s${++sessionCounter}-${Date.now().toString(36)}`;
       sessions.set(id, { handle, key, size, offset: 0, createdAt: Date.now() });
-      res.json({ id, offset: 0, chunkGranularity: CHUNK_GRANULARITY });
+      res.json({ id, offset: 0, chunkGranularity: CHUNK_GRANULARITY, partSize: DIRECT_PART_BYTES, direct: true });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
     }
   });
 
-  // GET /u/api/status/:id -> { offset, complete, file? } (resume point)
+  // GET /u/api/status/:id -> { offset, complete, partNumbers, partSize, file? }
+  // (resume point; partNumbers lets the direct path skip parts already on B2)
   app.get("/u/api/status/:id", async (req, res) => {
     try {
       const company = companyOf(req);
       if (!company) return res.status(403).json({ error: "bad token" });
       const s = sessions.get(req.params.id);
       if (!s) return res.status(404).json({ error: "unknown session" });
-      const r = await state.transport.sessionOffset(s.handle, s.size);
+      const r = await state.transport.sessionParts(s.handle, s.size);
       s.offset = r.offset;
       if (r.complete) sessions.delete(req.params.id);
-      res.json(r);
+      res.json({ ...r, partSize: DIRECT_PART_BYTES });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
+  });
+
+  // POST /u/api/sign-parts { id, partNumbers: [1..10000, ...] }
+  // -> { urls: { "<partNumber>": "<presigned PUT url>" }, expiresIn }
+  // The browser PUTs part bytes straight to B2 with these URLs; no file
+  // data transits this server on the direct path.
+  app.post("/u/api/sign-parts", limit(600, 10 * 60e3), async (req, res) => {
+    try {
+      const company = companyOf(req);
+      if (!company) return res.status(403).json({ error: "bad token" });
+      const body = await readJsonBody(req);
+      const s = sessions.get(body.id);
+      if (!s) return res.status(404).json({ error: "unknown session" });
+      const nums = [...new Set((Array.isArray(body.partNumbers) ? body.partNumbers : []).map((n) => parseInt(n, 10)))];
+      if (!nums.length || nums.length > 256 || nums.some((n) => !Number.isInteger(n) || n < 1 || n > 10000)) {
+        return res.status(400).json({ error: "partNumbers must be 1..256 integers in 1..10000" });
+      }
+      const urls = {};
+      for (const n of nums) urls[n] = state.transport.presignPart(s.handle, n);
+      res.json({ urls, expiresIn: PRESIGN_EXPIRES_SECONDS });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
+  });
+
+  // POST /u/api/complete { id } -> { complete: true, offset, file }
+  // Completes the multipart session from B2's own part list (the server
+  // never trusts browser-reported etags).
+  app.post("/u/api/complete", limit(120, 10 * 60e3), async (req, res) => {
+    try {
+      const company = companyOf(req);
+      if (!company) return res.status(403).json({ error: "bad token" });
+      const body = await readJsonBody(req);
+      const s = sessions.get(body.id);
+      if (!s) return res.status(404).json({ error: "unknown session" });
+      const file = await state.transport.completeDirect(s.handle);
+      sessions.delete(body.id);
+      res.json({ complete: true, offset: s.size, file });
+    } catch (err) {
+      res.status(500).json({ error: String(err.message || err) });
+    }
+  });
+
+  // POST /u/api/abort { id } — best-effort cleanup of a session the
+  // sender gave up on (the bucket lifecycle rule is the backstop).
+  app.post("/u/api/abort", limit(120, 10 * 60e3), async (req, res) => {
+    try {
+      const company = companyOf(req);
+      if (!company) return res.status(403).json({ error: "bad token" });
+      const body = await readJsonBody(req);
+      const s = sessions.get(body.id);
+      if (s) {
+        sessions.delete(body.id);
+        await state.transport.abort(s.handle);
+      }
+      res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String(err.message || err) });
     }

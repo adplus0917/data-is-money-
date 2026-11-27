@@ -41,7 +41,17 @@
 </div>
 <script>
 const TOKEN = location.pathname.split('/').filter(Boolean).pop();
-const CHUNK = 8 * 1024 * 1024; // 8 MiB — above B2 multipart's 5 MiB minimum part size, multiple of the 256 KiB granularity
+// Speed fix (Nov 27 2026): parts go DIRECT from this browser to Backblaze
+// B2 with presigned URLs the server hands out — no proxy hop through the
+// site server — 16 MiB parts, up to 5 uploads in flight at once across
+// ALL files (most photos are a single part, so parallelism has to span
+// files, not just parts of one file). If direct PUTs fail at the network
+// level (e.g. bucket CORS), the file falls back to the legacy proxied
+// chunk path below, which the server reconciles against B2 first.
+const LEGACY_CHUNK = 8 * 1024 * 1024; // legacy path only: above B2's 5 MiB minimum part size, multiple of the 256 KiB granularity
+const DEFAULT_PART = 16 * 1024 * 1024; // replaced by the server's partSize from /u/api/init
+const CONCURRENCY = 5;
+const SIGN_BATCH = 64;
 const pick = document.getElementById('pick');
 const drop = document.getElementById('drop');
 const list = document.getElementById('list');
@@ -55,7 +65,7 @@ drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('
 pick.addEventListener('change', () => addFiles(pick.files));
 
 function addFiles(fl) {
-  for (const f of fl) files.push({ file: f, state: 'queued', sessionId: null, offset: 0 });
+  for (const f of fl) files.push({ file: f, state: 'queued', sessionId: null, offset: 0, partSize: DEFAULT_PART, totalParts: 0, doneParts: new Set(), signCache: new Map(), directFailed: false, finishing: false });
   render(); go.disabled = files.length === 0;
 }
 function render() {
@@ -78,43 +88,156 @@ async function api(path, opts) {
   return res.json();
 }
 
-async function uploadOne(it) {
+function partRange(it, n) { // n is 1-based
+  const start = (n - 1) * it.partSize;
+  return { start, end: Math.min(start + it.partSize, it.file.size) };
+}
+function syncOffset(it) { // confirmed bytes = sizes of the parts B2 holds
+  let n = 0;
+  for (const p of it.doneParts) { const r = partRange(it, p); n += r.end - r.start; }
+  it.offset = n;
+}
+
+async function ensureSession(it) {
   const who = document.getElementById('who').value.trim() || 'crew';
   if (!it.sessionId) {
     const init = await api('/u/api/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: it.file.name, size: it.file.size, mimeType: it.file.type, uploader: who }) });
     it.sessionId = init.id;
+    it.partSize = init.partSize || DEFAULT_PART;
+    it.doneParts = new Set();
   } else {
     const st = await api('/u/api/status/' + it.sessionId);
-    if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return; }
-    it.offset = st.offset;
+    if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return false; }
+    it.partSize = st.partSize || it.partSize || DEFAULT_PART;
+    it.doneParts = new Set(st.partNumbers || []);
   }
+  it.totalParts = Math.max(1, Math.ceil(it.file.size / it.partSize));
+  syncOffset(it);
+  return true;
+}
+
+async function signedUrl(it, n) {
+  if (it.signCache.has(n)) return it.signCache.get(n);
+  const wanted = [];
+  for (let k = n; k <= it.totalParts && wanted.length < SIGN_BATCH; k++) {
+    if (!it.doneParts.has(k) && !it.signCache.has(k)) wanted.push(k);
+  }
+  if (!wanted.includes(n)) wanted.unshift(n);
+  const r = await api('/u/api/sign-parts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: it.sessionId, partNumbers: wanted }) });
+  for (const k of Object.keys(r.urls)) it.signCache.set(Number(k), r.urls[k]);
+  return it.signCache.get(n);
+}
+
+async function putPart(it, n) {
+  const { start, end } = partRange(it, n);
+  const blob = it.file.slice(start, end);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const url = await signedUrl(it, n);
+      // Plain fetch: NO extra headers — the presigned URL is the auth, and
+      // extra headers would widen the CORS preflight B2 must allow.
+      const res = await fetch(url, { method: 'PUT', body: blob });
+      if (res.status === 403 && attempt === 0) { it.signCache.delete(n); continue; } // stale signature: re-sign once
+      if (!res.ok) throw new Error('B2 HTTP ' + res.status);
+      return;
+    } catch (e) {
+      if (e instanceof TypeError) throw e; // network/CORS failure: direct path is broken for this file
+      lastErr = e;
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+  throw lastErr || new Error('part upload failed');
+}
+
+async function finishFile(it) {
+  if (it.state === 'done' || it.finishing) return;
+  it.finishing = true;
+  try {
+    const r = await api('/u/api/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: it.sessionId }) });
+    if (r.complete) { it.state = 'done'; it.offset = it.file.size; }
+  } finally { it.finishing = false; render(); }
+}
+
+// Legacy fallback: chunks proxied through the site server, sequentially.
+// The server appends parts in order, so this is only safe when the parts
+// already on B2 form a prefix (1..k) — with CORS fully blocked nothing
+// lands, the common case. A non-prefix set means a mid-run network drop:
+// abort and restart the file clean rather than assemble a corrupt file.
+async function uploadLegacy(it) {
+  let st = await api('/u/api/status/' + it.sessionId);
+  if (st.complete) { it.state = 'done'; it.offset = it.file.size; render(); return; }
+  const landed = (st.partNumbers || []).slice().sort((a, b) => a - b);
+  const isPrefix = landed.every((n, i) => n === i + 1);
+  if (!isPrefix) {
+    await api('/u/api/abort', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.sessionId }) });
+    it.sessionId = null; it.doneParts = new Set(); it.signCache = new Map();
+    await ensureSession(it);
+    st = { offset: 0 };
+  }
+  let offset = st.offset;
   it.state = 'uploading'; render();
-  while (it.offset < it.file.size) {
-    const end = Math.min(it.offset + CHUNK, it.file.size);
-    const blob = it.file.slice(it.offset, end);
-    const buf = await blob.arrayBuffer();
-    const r = await api('/u/api/chunk/' + it.sessionId, { method: 'PUT', headers: { 'x-chunk-start': String(it.offset) }, body: buf });
-    it.offset = r.offset;
-    if (r.complete) break;
+  while (offset < it.file.size) {
+    const end = Math.min(offset + LEGACY_CHUNK, it.file.size);
+    const buf = await it.file.slice(offset, end).arrayBuffer();
+    const r = await api('/u/api/chunk/' + it.sessionId, { method: 'PUT', headers: { 'x-chunk-start': String(offset) }, body: buf });
+    offset = r.offset;
+    it.offset = offset;
     render();
+    if (r.complete) break;
   }
   it.state = 'done'; it.offset = it.file.size; render();
+}
+
+async function runUploads() {
+  const queue = []; // global across files: { it, n }
+  for (const it of files) {
+    if (it.state === 'done') continue;
+    it.state = 'uploading'; it.directFailed = false; it.signCache = new Map();
+    try {
+      const live = await ensureSession(it);
+      if (!live) continue; // B2 says this session already completed
+    } catch (e) { it.state = 'error'; render(); continue; }
+    render();
+    for (let n = 1; n <= it.totalParts; n++) if (!it.doneParts.has(n)) queue.push({ it, n });
+    if (it.doneParts.size >= it.totalParts) {
+      try { await finishFile(it); } catch (e) { it.state = 'error'; render(); }
+    }
+  }
+  async function worker() {
+    while (queue.length) {
+      const t = queue.shift();
+      const it = t.it;
+      if (it.state === 'done' || it.directFailed || it.state === 'error') continue;
+      try {
+        await putPart(it, t.n);
+        it.doneParts.add(t.n); syncOffset(it); render();
+        if (it.doneParts.size >= it.totalParts) await finishFile(it);
+      } catch (e) {
+        if (e instanceof TypeError) it.directFailed = true; // direct B2 path broken -> legacy fallback below
+        else it.state = 'error';
+        render();
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  for (const it of files) {
+    if (it.directFailed && it.state !== 'done') {
+      try { await uploadLegacy(it); }
+      catch (e) { it.state = 'error'; render(); }
+    }
+  }
 }
 
 go.addEventListener('click', async () => {
   go.disabled = true;
   document.getElementById('done').style.display = 'none';
-  for (const it of files) {
-    if (it.state === 'done') continue;
-    let attempts = 0;
-    while (it.state !== 'done' && attempts < 5) {
-      try { await uploadOne(it); }
-      catch (e) { attempts++; it.state = 'error'; render(); await new Promise(r => setTimeout(r, 2000 * attempts)); }
-    }
-  }
-  go.disabled = false;
-  if (files.every(f => f.state === 'done')) document.getElementById('done').style.display = 'block';
+  try { await runUploads(); }
+  finally { go.disabled = false; }
+  if (files.length && files.every(f => f.state === 'done')) document.getElementById('done').style.display = 'block';
 });
 </script>
 </body>
