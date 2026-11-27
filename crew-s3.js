@@ -59,9 +59,17 @@ function encodeKey(key) {
 function xmlEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+function xmlUnescape(s) {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
 function xmlTag(xml, tag) {
   const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
-  return m ? m[1] : null;
+  return m ? xmlUnescape(m[1]) : null;
 }
 
 class S3MultipartTransport {
