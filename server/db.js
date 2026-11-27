@@ -7,6 +7,7 @@
 // ============================================================
 const fs = require("fs");
 const path = require("path");
+const { scoreLead } = require("./options");
 
 const YEAR = () => new Date().getFullYear();
 const folioOf = (year, n) => `DP-${year}-${String(n).padStart(4, "0")}`;
@@ -112,19 +113,40 @@ function postgres(url) {
     /* ----- funnel leads (qualifier questionnaire → CRM calling list) ----- */
     async createLead(l) {
       const { rows: [r] } = await pool.query(
-        `INSERT INTO leads (source, name, company_name, email, phone, website, industry, data_authority, employee_band, years_band, position, lang)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        `INSERT INTO leads (source, name, company_name, email, phone, website, industry, data_authority, employee_band, years_band, position, lang, lead_score)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
         [l.source || "site_gate", l.name, l.company_name, l.email, l.phone || null, l.website || null,
-         l.industry || null, l.data_authority || null, l.employee_band || null, l.years_band || null, l.position || null, l.lang || null]);
+         l.industry || null, l.data_authority || null, l.employee_band || null, l.years_band || null, l.position || null, l.lang || null,
+         scoreLead(l)]);
       return r;
     },
     async listLeads(f = {}) {
       const where = [], v = [];
-      if (f.status) { v.push(f.status); where.push(`status=$${v.length}`); }
-      if (f.unassigned) where.push(`assigned_to IS NULL`);
-      else if (f.assigned_to) { v.push(f.assigned_to); where.push(`assigned_to=$${v.length}`); }
+      if (f.status) { v.push(f.status); where.push(`l.status=$${v.length}`); }
+      if (f.unassigned) where.push(`l.assigned_to IS NULL`);
+      else if (f.assigned_to) { v.push(f.assigned_to); where.push(`l.assigned_to=$${v.length}`); }
       const { rows } = await pool.query(
-        `SELECT * FROM leads ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT 5000`, v);
+        `SELECT l.*, b.folio AS bk_folio, b.appt_date::text AS bk_date, b."window" AS bk_window, b.profile AS bk_profile,
+                s.folio AS sub_folio, s.estimate_low AS sub_low, s.estimate_high AS sub_high
+         FROM leads l
+         LEFT JOIN bookings b ON b.id = l.booking_id
+         LEFT JOIN LATERAL (SELECT folio, estimate_low, estimate_high FROM submissions
+                            WHERE lower(email) = lower(l.email) ORDER BY created_at DESC LIMIT 1) s ON true
+         ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY l.created_at DESC LIMIT 5000`, v);
+      for (const r of rows) {
+        if (r.lead_score == null) r.lead_score = scoreLead(r);
+        const prof = r.bk_profile && typeof r.bk_profile === "object" ? r.bk_profile : {};
+        r.crm = {
+          folio: r.bk_folio || r.sub_folio || null,
+          worth_low: prof.estimate_low != null ? prof.estimate_low : (r.sub_low != null ? Number(r.sub_low) : null),
+          worth_high: prof.estimate_high != null ? prof.estimate_high : (r.sub_high != null ? Number(r.sub_high) : null),
+          booked: !!r.booking_id,
+          appt_date: r.bk_date || null,
+          window: r.bk_window || null,
+        };
+        delete r.bk_folio; delete r.bk_date; delete r.bk_window; delete r.bk_profile;
+        delete r.sub_folio; delete r.sub_low; delete r.sub_high;
+      }
       return rows;
     },
     async getLead(id) {
@@ -416,14 +438,29 @@ function jsonFile(dir) {
       const d = load(), r = { id: ++d.ids, created_at: new Date().toISOString(), source: l.source || "site_gate",
         name: l.name, company_name: l.company_name, email: l.email, phone: l.phone || null, website: l.website || null,
         industry: l.industry || null, data_authority: l.data_authority || null, employee_band: l.employee_band || null,
-        years_band: l.years_band || null, position: l.position || null, lang: l.lang || null,
+        years_band: l.years_band || null, position: l.position || null, lang: l.lang || null, lead_score: scoreLead(l),
         status: "new", assigned_to: null, booking_id: null, status_updated_at: null, status_updated_by: null };
       d.leads.push(r); save(d); return r;
     }),
     async listLeads(f = {}) {
-      return load().leads.slice().reverse().filter(l =>
+      const d = load();
+      return d.leads.slice().reverse().filter(l =>
         (!f.status || l.status === f.status) &&
-        (f.unassigned ? !l.assigned_to : !f.assigned_to || l.assigned_to === f.assigned_to));
+        (f.unassigned ? !l.assigned_to : !f.assigned_to || l.assigned_to === f.assigned_to)).map(l => {
+        const bk = d.bookings.find(b => b.id === l.booking_id) || null;
+        const sub = d.submissions.slice().reverse().find(s => (s.email || "").toLowerCase() === l.email.toLowerCase()) || null;
+        const prof = bk && bk.profile ? bk.profile : {};
+        return { ...l,
+          lead_score: l.lead_score != null ? l.lead_score : scoreLead(l),
+          crm: {
+            folio: (bk && bk.folio) || (sub && sub.folio) || null,
+            worth_low: prof.estimate_low != null ? prof.estimate_low : (sub ? sub.estimate_low : null),
+            worth_high: prof.estimate_high != null ? prof.estimate_high : (sub ? sub.estimate_high : null),
+            booked: !!l.booking_id,
+            appt_date: bk ? bk.appt_date : null,
+            window: bk ? bk.window : null,
+          } };
+      });
     },
     async getLead(id) { return load().leads.find(x => x.id === Number(id)) || null; },
     updateLead: (id, p) => locked(() => {

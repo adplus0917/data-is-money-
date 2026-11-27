@@ -453,6 +453,11 @@ CREATE TABLE IF NOT EXISTS leads (
 CREATE INDEX IF NOT EXISTS leads_created_idx ON leads (created_at DESC);
 CREATE INDEX IF NOT EXISTS leads_queue_idx ON leads (assigned_to, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS leads_email_idx ON leads (lower(email));
+-- Lead score 1-10 (Nov 27 2026, Miguel's order): computed by
+-- server/options.js scoreLead at lead creation so the CRM can be worked
+-- by tier (10s first). NULL only on rows from before this column; the
+-- db layer computes those on read so the panel never shows a blank.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score integer;
 -- Qualifier answers on the booking row as well (Nov 26 2026).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS industry text;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS data_authority text;

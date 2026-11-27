@@ -71,6 +71,50 @@ function checkLead(b, { requireQualifiers = true } = {}) {
   return { ok: true, lead: { name, company_name, email, phone: phone || null, website: website || null, ...q.qualifiers } };
 }
 
+
+/* ---------------------------------------------------------------------------
+   LEAD SCORE 1-10 (Nov 27 2026, Miguel's direct order): every lead that
+   lands in the CRM carries a 1-10 score so the calling team works the
+   best companies first (10s, then 9s, ...) and follow-up teams can be
+   built around the tiers. Computed server-side at lead creation from
+   the five qualifier answers - the structured data a lead carries:
+     employee band - weighted MOST ("most employees" is the top signal):
+       under20 0 / 20to50 1 / 51to150 2 / 151to500 3 / over500 4
+     years in operation (more years = more accumulated data):
+       y0to3 0 / y4to6 0.5 / y7to10 1 / y11to14 1.5 / y15plus 2
+     industry (richness of the data for AI training):
+       1.5 tech_software, finance_banking, healthcare, insurance
+       1.0 legal, accounting, professional_services, realestate,
+           marketing_media, manufacturing
+       0.5 construction_trades, other
+     position (a decision-maker answered):
+       founder/owner/president/ceo/csuite/board 1 / other 0.25
+     data-sharing authority: can_approve 0.5 / partner_signoff 0
+   Raw points max at 9 and scale onto 1-10 (score = round(raw * 10/9),
+   clamped 1-10), so only the full top combination earns a 10. CAP: a
+   lead whose contact CANNOT approve data sharing (partner_signoff, or
+   the question unanswered) is capped at 7 - never a top tier until
+   that changes. Missing answers score 0 for their factor. The weights
+   live ONLY here; adjust them in this one place and every new lead
+   follows. (The valuation estimate joins later, on the booking record,
+   which carries its own engine score - it is not part of this score.)
+   --------------------------------------------------------------------------- */
+const LEAD_SCORE_POINTS = {
+  employee_band: { under20: 0, "20to50": 1, "51to150": 2, "151to500": 3, over500: 4 },
+  years_band: { y0to3: 0, y4to6: 0.5, y7to10: 1, y11to14: 1.5, y15plus: 2 },
+  industry: { tech_software: 1.5, finance_banking: 1.5, healthcare: 1.5, insurance: 1.5, legal: 1, accounting: 1, professional_services: 1, realestate: 1, marketing_media: 1, manufacturing: 1, construction_trades: 0.5, other: 0.5 },
+  position: { founder: 1, owner: 1, president: 1, ceo: 1, csuite: 1, board: 1, other: 0.25 },
+  data_authority: { can_approve: 0.5, partner_signoff: 0 },
+};
+function scoreLead(q) {
+  q = q && typeof q === "object" ? q : {};
+  let raw = 0;
+  for (const k of Object.keys(LEAD_SCORE_POINTS)) raw += LEAD_SCORE_POINTS[k][q[k]] || 0;
+  let score = Math.min(10, Math.max(1, Math.round(raw * 10 / 9)));
+  if (q.data_authority !== "can_approve") score = Math.min(score, 7);
+  return score;
+}
+
 const str = (v, max = 160) => typeof v === "string" ? v.trim().slice(0, max) : "";
 
 // ---------------------------------------------------------------------------
@@ -241,4 +285,4 @@ function checkBooking(b, now = new Date()) {
   return { ok: true, booking: { name, company_name, email, phone: phone || null, note: note || null, appt_date: date, window: b.window, answers: a.answers, qualifiers } };
 }
 
-module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail, INDUSTRIES, AUTHORITY, EMPLOYEE_BANDS, YEARS_BANDS, POSITIONS, LEAD_STATUSES, LEAD_SOURCES, checkQualifiers, checkLead, BOOKING_WINDOWS, BOOKING_SLOT, BOOKING_STATUSES, BOOKING_DAYS, BOOKING_EVERY_DAY, BOOKING_TZ, BOOKING_WINDOW_START, ZOOM_INVITEES, etParts, bookingDays, checkBooking };
+module.exports = { SECTORS, YEARS, EMPLOYEES, TYPES, VOLUMES, REVENUE, FORMATS, FREQUENCY, TRACKS, STATUSES, MANIFEST_ITEMS, checkAnswers, checkContact, toEngineInput, str, KNOWN_TLDS, emailError, isValidEmail, INDUSTRIES, AUTHORITY, EMPLOYEE_BANDS, YEARS_BANDS, POSITIONS, LEAD_STATUSES, LEAD_SOURCES, checkQualifiers, checkLead, LEAD_SCORE_POINTS, scoreLead, BOOKING_WINDOWS, BOOKING_SLOT, BOOKING_STATUSES, BOOKING_DAYS, BOOKING_EVERY_DAY, BOOKING_TZ, BOOKING_WINDOW_START, ZOOM_INVITEES, etParts, bookingDays, checkBooking };
