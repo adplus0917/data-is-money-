@@ -545,3 +545,7 @@ CREATE TABLE IF NOT EXISTS worker_access_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS worker_access_log_worker_idx ON worker_access_log (worker_id, created_at DESC);
+-- file_id must hold BOTH folder_files serial ids and upload_files UUIDs
+-- (a refused master open carries the vault file's UUID); INTEGER silently
+-- dropped those rows from worker_access_log (Nov 27 2026 verification fix).
+ALTER TABLE worker_access_log ALTER COLUMN file_id TYPE text;
