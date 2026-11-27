@@ -15,7 +15,10 @@ const folioOf = (year, n) => `DP-${year}-${String(n).padStart(4, "0")}`;
 function postgres(url) {
   const { Pool } = require("pg");
   const ssl = process.env.PGSSL === "false" ? false : (/localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false });
-  const pool = new Pool({ connectionString: url, ssl, max: 10 });
+  const pool = new Pool({ connectionString: url, ssl, max: 10, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000, keepAlive: true });
+  // An idle-client error must never wedge or crash the process silently:
+  // log it and let the pool replace the dead connection.
+  pool.on("error", (e) => console.error("pg pool idle client error:", e.message));
 
   return {
     kind: "postgres",
