@@ -305,14 +305,50 @@ class S3MultipartTransport {
     return `${target.base}${path}?${qs}&X-Amz-Signature=${signature}`;
   }
 
-  // Complete a direct-path session from B2's OWN part list — the etags the
-  // browser saw are never trusted; the server asks B2 what actually landed.
-  async completeDirect(session) {
+  // Complete a direct-path session from the backend's OWN part list — the
+  // etags the browser saw are never trusted; the server asks the backend
+  // what actually landed.
+  //
+  // HARDENING (Nov 27 2026, Miguel's code-drop review merged): before the
+  // completion is issued, the part list itself is validated —
+  //   * part numbers must be contiguous 1..N (no gaps, no duplicates);
+  //   * every part must carry an ETag (an etag-less part cannot be
+  //     referenced in the completion document, so it is a hard failure);
+  //   * every part except the last must be at least MIN_PART_BYTES and no
+  //     part may exceed the 5 GiB S3 part ceiling (part-size validation);
+  //   * when the caller knows the declared file size, the parts must sum
+  //     to it EXACTLY — a session can no longer "complete" into a silently
+  //     truncated object.
+  // Validation failures are typed: err.code is set and err.httpStatus is
+  // 400, so the route layer can answer with a typed client error instead
+  // of a bare 500.
+  async completeDirect(session, expectedSize = null) {
     const parts = await this.listParts(session);
-    if (!parts.length) throw new Error('cannot complete: B2 holds no parts for this session');
+    if (!parts.length) throw new Error('cannot complete: the storage backend holds no parts for this session');
+    const bad = (code, msg) => { const e = new Error(msg); e.code = code; e.httpStatus = 400; return e; };
+    let sum = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (p.partNumber !== i + 1) throw bad('INCOMPLETE_PARTS', `cannot complete: part ${i + 1} is missing (parts must be contiguous from 1)`);
+      if (!p.etag) throw bad('MISSING_ETAG', `cannot complete: part ${p.partNumber} has no ETag`);
+      if (!Number.isFinite(p.size) || p.size <= 0) throw bad('BAD_PART_SIZE', `cannot complete: part ${p.partNumber} has an invalid size`);
+      if (p.size > 5 * 1024 * 1024 * 1024) throw bad('BAD_PART_SIZE', `cannot complete: part ${p.partNumber} exceeds the 5 GiB part limit`);
+      if (i < parts.length - 1 && p.size < MIN_PART_BYTES) throw bad('BAD_PART_SIZE', `cannot complete: part ${p.partNumber} is ${p.size} bytes; every part except the last must be at least ${MIN_PART_BYTES} bytes`);
+      sum += p.size;
+    }
+    if (expectedSize != null && sum !== expectedSize) {
+      throw bad('SIZE_MISMATCH', `cannot complete: parts total ${sum} bytes but the file was declared as ${expectedSize} bytes`);
+    }
     session.parts = parts;
-    session.received = parts.reduce((n, p) => n + p.size, 0);
+    session.received = sum;
     return this.complete(session);
+  }
+
+  // HEAD an object: { size, etag } — used after completion to prove the
+  // stored object is exactly the size that was declared.
+  async headObject(key) {
+    const { res } = await this.request('HEAD', key, {});
+    return { size: Number(res.headers.get('content-length') || 0), etag: res.headers.get('etag') || null };
   }
 
   // Best-effort cleanup for abandoned sessions (not wired to a timer; the

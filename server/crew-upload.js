@@ -41,6 +41,16 @@
 // mounts DISABLED — every token behaves exactly like a bad token
 // (page 404, API 403) — and it can never take the site down.
 //
+// HARDENING (Nov 27 2026, merged from Miguel's hardened upload-server
+// review): session ownership is asserted on every session route (a
+// stream token can only touch its own sessions / its own bucket
+// folder), part-number batches are capped at 100, completion validates
+// the backend's part list (contiguity, per-part size limits, an ETag on
+// every part, parts summing exactly to the declared size) and
+// HEAD-verifies the finished object, and API errors are typed
+// (400 validation / 403 ownership / 404 unknown session / 502 storage)
+// instead of raw 500s carrying backend internals.
+//
 // STORAGE BACKEND: any S3-compatible store. Since Nov 27 2026 the
 // primary target is Amazon S3 (see ops/S3-GO-LIVE.md); Backblaze B2
 // remains supported by pointing the same env at it. crew-s3.js reads
@@ -204,6 +214,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
         size BIGINT NOT NULL, uploader TEXT, name TEXT,
         state TEXT NOT NULL DEFAULT 'active', etag TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await pool.query(`ALTER TABLE crew_upload_sessions ADD COLUMN IF NOT EXISTS owner TEXT`);
       await pool.query(`DELETE FROM crew_upload_sessions WHERE state = 'complete' AND updated_at < now() - interval '30 days'`);
       const { rows } = await pool.query(`SELECT count(*)::int AS n FROM crew_upload_sessions WHERE state = 'active'`);
       activeSessions = rows[0] ? rows[0].n : 0;
@@ -215,26 +226,26 @@ module.exports = function mount(app, { limiter, db } = {}) {
     try {
       await storeReady;
       await pool.query(
-        `INSERT INTO crew_upload_sessions (id, key, upload_id, size, uploader, name, state)
-         VALUES ($1,$2,$3,$4,$5,$6,'active')
+        `INSERT INTO crew_upload_sessions (id, key, upload_id, size, uploader, name, state, owner)
+         VALUES ($1,$2,$3,$4,$5,$6,'active',$7)
          ON CONFLICT (id) DO UPDATE SET updated_at = now()`,
-        [id, sess.key, sess.handle.uploadId, sess.size, meta && meta.uploader || null, meta && meta.name || null]);
+        [id, sess.key, sess.handle.uploadId, sess.size, meta && meta.uploader || null, meta && meta.name || null, meta && meta.owner || null]);
     } catch (e) { console.error("crew-upload: session persist failed —", e.message); }
   }
   // Returns a session object, { completeRecord } for a finished upload,
   // or null when the id is unknown anywhere.
   async function storeGet(id) {
     if (sessions.has(id)) return sessions.get(id);
-    if (completedSessions.has(id)) { const c = completedSessions.get(id); return { completeRecord: { key: c.key, size: c.size, etag: c.etag } }; }
+    if (completedSessions.has(id)) { const c = completedSessions.get(id); return { completeRecord: { key: c.key, size: c.size, etag: c.etag }, owner: c.owner || null }; }
     if (!pool) return null;
     try {
       await storeReady;
       const { rows } = await pool.query(`SELECT * FROM crew_upload_sessions WHERE id = $1`, [id]);
       if (!rows[0]) return null;
       const r = rows[0];
-      if (r.state === "complete") return { completeRecord: { key: r.key, size: Number(r.size), etag: r.etag } };
+      if (r.state === "complete") return { completeRecord: { key: r.key, size: Number(r.size), etag: r.etag }, owner: r.owner || null };
       const sess = { handle: { uploadId: r.upload_id, key: r.key, parts: [], received: 0 },
-        key: r.key, size: Number(r.size), offset: 0, createdAt: new Date(r.created_at).getTime(), restored: true, synced: false };
+        key: r.key, size: Number(r.size), offset: 0, createdAt: new Date(r.created_at).getTime(), restored: true, synced: false, owner: r.owner || null };
       sessions.set(id, sess);
       return sess;
     } catch (e) { console.error("crew-upload: session load failed —", e.message); return null; }
@@ -247,7 +258,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
   async function storeComplete(id, file, size) {
     const sess = sessions.get(id);
     if (sessions.delete(id)) activeSessions = Math.max(0, activeSessions - 1);
-    completedSessions.set(id, { key: (file && file.key) || (sess && sess.key) || null, size: size || (sess && sess.size) || 0, etag: file && file.etag ? String(file.etag) : null, at: Date.now() });
+    completedSessions.set(id, { key: (file && file.key) || (sess && sess.key) || null, size: size || (sess && sess.size) || 0, etag: file && file.etag ? String(file.etag) : null, at: Date.now(), owner: (sess && sess.owner) || null });
     if (completedSessions.size > 5000) completedSessions.delete(completedSessions.keys().next().value);
     if (!pool) return;
     try {
@@ -268,6 +279,33 @@ module.exports = function mount(app, { limiter, db } = {}) {
   }
 
   const companyOf = (req) => (state.enabled ? state.companies.get(req.headers["x-upload-token"] || "") : null);
+
+  // HARDENING (Nov 27 2026): session ownership. init stamps each session
+  // with the stream that created it; every session route then asserts the
+  // caller's stream owns the session before touching it — one stream's
+  // token can no longer status / sign / complete / abort another
+  // stream's upload (per-client folder ownership, from Miguel's review).
+  // Sessions created before this shipped carry no owner stamp; for those
+  // the object's key must still fall inside the caller's own stream
+  // folder, which is the same boundary enforced by the key layout.
+  const ownerOf = (company) => `${company.slug}/${company.subfolder || ""}`;
+  const prefixOf = (company) => (company.subfolder ? `${company.slug}/${company.subfolder}/` : `${company.slug}/`);
+  function ownedBy(s, company) {
+    if (!s) return false;
+    if (s.owner) return s.owner === ownerOf(company);
+    const key = s.key || (s.completeRecord && s.completeRecord.key) || "";
+    return key.startsWith(prefixOf(company));
+  }
+  const notOwned = (res) => res.status(403).json({ error: "session belongs to a different upload stream" });
+  // Typed errors: a validation problem answers with its own httpStatus
+  // (400/403/404 set by the thrower); anything else is a storage or
+  // service failure and answers a generic 502 — raw backend error text
+  // (which can name buckets and request internals) is logged, never sent.
+  function sendErr(res, err) {
+    const status = err && err.httpStatus ? err.httpStatus : 502;
+    if (status >= 500) console.error("crew-upload:", (err && err.message) || err);
+    res.status(status).json({ error: status >= 500 ? "storage backend error" : String((err && err.message) || err) });
+  }
 
   app.get("/u/health", (req, res) => res.json({
     ok: true,
@@ -301,7 +339,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
       const body = await readJsonBody(req);
       const name = sanitizeName(body.name);
       const size = Number(body.size);
-      if (!Number.isFinite(size) || size <= 0) return res.status(400).json({ error: "invalid size" });
+      if (!Number.isInteger(size) || size <= 0) return res.status(400).json({ error: "invalid size" });
       if (size > MAX_FILE_BYTES) return res.status(413).json({ error: `file too large (max ${MAX_FILE_BYTES} bytes)` });
       const ext = path.extname(name).toLowerCase();
       if (BLOCKED_EXT.has(ext)) return res.status(415).json({ error: "file type not allowed" });
@@ -313,10 +351,10 @@ module.exports = function mount(app, { limiter, db } = {}) {
       const handle = await state.transport.initSession({ key, size, mimeType: body.mimeType });
       const id = `s${++sessionCounter}-${Date.now().toString(36)}`;
       activeSessions++;
-      await storePut(id, { handle, key, size, offset: 0, createdAt: Date.now(), synced: true }, { uploader, name });
+      await storePut(id, { handle, key, size, offset: 0, createdAt: Date.now(), synced: true, owner: ownerOf(company) }, { uploader, name, owner: ownerOf(company) });
       res.json({ id, offset: 0, chunkGranularity: CHUNK_GRANULARITY, partSize: DIRECT_PART_BYTES, direct: true });
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
@@ -328,6 +366,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
       if (!company) return res.status(403).json({ error: "bad token" });
       const s = await storeGet(req.params.id);
       if (!s) return res.status(404).json({ error: "unknown session" });
+      if (!ownedBy(s, company)) return notOwned(res);
       if (s.completeRecord) {
         return res.json({ complete: true, offset: s.completeRecord.size, partNumbers: [], partSize: DIRECT_PART_BYTES, file: { key: s.completeRecord.key, etag: s.completeRecord.etag } });
       }
@@ -337,7 +376,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
       if (r.complete) await storeComplete(req.params.id, r.file, s.size);
       res.json({ ...r, partSize: DIRECT_PART_BYTES });
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
@@ -352,15 +391,16 @@ module.exports = function mount(app, { limiter, db } = {}) {
       const body = await readJsonBody(req);
       const s = await storeGet(body.id);
       if (!s || s.completeRecord) return res.status(404).json({ error: "unknown session" });
+      if (!ownedBy(s, company)) return notOwned(res);
       const nums = [...new Set((Array.isArray(body.partNumbers) ? body.partNumbers : []).map((n) => parseInt(n, 10)))];
-      if (!nums.length || nums.length > 256 || nums.some((n) => !Number.isInteger(n) || n < 1 || n > 10000)) {
-        return res.status(400).json({ error: "partNumbers must be 1..256 integers in 1..10000" });
+      if (!nums.length || nums.length > 100 || nums.some((n) => !Number.isInteger(n) || n < 1 || n > 10000)) {
+        return res.status(400).json({ error: "partNumbers must be 1..100 integers in 1..10000" });
       }
       const urls = {};
       for (const n of nums) urls[n] = state.transport.presignPart(s.handle, n);
       res.json({ urls, expiresIn: PRESIGN_EXPIRES_SECONDS });
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
@@ -374,12 +414,21 @@ module.exports = function mount(app, { limiter, db } = {}) {
       const body = await readJsonBody(req);
       const s = await storeGet(body.id);
       if (!s) return res.status(404).json({ error: "unknown session" });
+      if (!ownedBy(s, company)) return notOwned(res);
       if (s.completeRecord) return res.json({ complete: true, offset: s.completeRecord.size, file: { key: s.completeRecord.key, etag: s.completeRecord.etag } });
-      const file = await state.transport.completeDirect(s.handle);
+      // completeDirect validates the backend's own part list against the
+      // declared size (contiguity, part sizes, an ETag on every part,
+      // exact byte total) before completing; afterwards the finished
+      // object is HEAD-verified and its ETag is required — a completion
+      // without one is not reported as success.
+      const file = await state.transport.completeDirect(s.handle, s.size);
+      if (!file.etag) { const e = new Error("storage backend returned no ETag for the completed file"); e.httpStatus = 502; throw e; }
+      const head = await state.transport.headObject(file.key);
+      if (head.size !== s.size) { const e = new Error(`completed object is ${head.size} bytes, expected ${s.size}`); e.httpStatus = 502; throw e; }
       await storeComplete(body.id, file, s.size);
       res.json({ complete: true, offset: s.size, file });
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
@@ -391,13 +440,13 @@ module.exports = function mount(app, { limiter, db } = {}) {
       if (!company) return res.status(403).json({ error: "bad token" });
       const body = await readJsonBody(req);
       const s = await storeGet(body.id);
-      if (s && !s.completeRecord) {
+      if (s && !s.completeRecord && ownedBy(s, company)) {
         await storeDelete(body.id);
         await state.transport.abort(s.handle);
       }
       res.json({ ok: true });
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
@@ -408,11 +457,14 @@ module.exports = function mount(app, { limiter, db } = {}) {
       if (!company) return res.status(403).json({ error: "bad token" });
       const s = await storeGet(req.params.id);
       if (!s || s.completeRecord) return res.status(404).json({ error: "unknown session" });
+      if (!ownedBy(s, company)) return notOwned(res);
       const sync = await syncRestored(s); // restored session: re-derive parts/offset from the backend first
       if (sync && sync.complete) return res.json({ complete: true, offset: s.size, file: sync.file });
-      const start = parseInt(req.headers["x-chunk-start"] || "0", 10);
+      const start = Number(req.headers["x-chunk-start"] || "0");
+      if (!Number.isInteger(start) || start < 0) return res.status(400).json({ error: "x-chunk-start must be a non-negative integer byte offset" });
       const chunk = await readRaw(req);
       if (chunk.length === 0) return res.status(400).json({ error: "empty chunk" });
+      if (start + chunk.length > s.size) return res.status(400).json({ error: "chunk exceeds the declared file size" });
       const isFinal = start + chunk.length >= s.size;
       if (!isFinal && chunk.length % CHUNK_GRANULARITY !== 0) {
         return res.status(400).json({ error: `non-final chunks must be multiples of ${CHUNK_GRANULARITY}` });
@@ -425,7 +477,7 @@ module.exports = function mount(app, { limiter, db } = {}) {
       if (r.complete) await storeComplete(req.params.id, r.file, s.size);
       res.json(r);
     } catch (err) {
-      res.status(500).json({ error: String(err.message || err) });
+      sendErr(res, err);
     }
   });
 
