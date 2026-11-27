@@ -486,3 +486,62 @@ DROP TRIGGER IF EXISTS audit_log_ro_t ON audit_log;
 CREATE TRIGGER audit_log_ro_t BEFORE UPDATE OR DELETE ON audit_log FOR EACH ROW EXECUTE FUNCTION audit_log_readonly();
 DROP TRIGGER IF EXISTS audit_log_trunc_t ON audit_log;
 CREATE TRIGGER audit_log_trunc_t BEFORE TRUNCATE ON audit_log FOR EACH STATEMENT EXECUTE FUNCTION audit_log_readonly();
+
+-- ============================================================
+-- Worker (non-admin) data-room accounts + per-customer folders
+-- (Nov 27 2026, Miguel's order; server/worker-routes.js).
+-- Every customer (submission folio) gets the same fixed folder set;
+-- worker accounts see only assigned customers and can never open
+-- master files; every open is logged in worker_access_log (and in
+-- the hash-chained audit_log via the route layer).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS worker_users (
+  id            SERIAL PRIMARY KEY,
+  username      TEXT UNIQUE NOT NULL,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  active        BOOLEAN NOT NULL DEFAULT true,
+  created_by    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS customer_folders (
+  folio      TEXT NOT NULL,
+  folder     TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (folio, folder)
+);
+CREATE TABLE IF NOT EXISTS worker_assignments (
+  id          SERIAL PRIMARY KEY,
+  worker_id   INTEGER NOT NULL REFERENCES worker_users(id) ON DELETE CASCADE,
+  folio       TEXT NOT NULL,
+  assigned_by TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (worker_id, folio)
+);
+CREATE TABLE IF NOT EXISTS folder_files (
+  id          SERIAL PRIMARY KEY,
+  folio       TEXT NOT NULL,
+  folder      TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  storage     TEXT NOT NULL DEFAULT 'staging',
+  storage_key TEXT NOT NULL,
+  size        BIGINT NOT NULL DEFAULT 0,
+  mime        TEXT,
+  uploaded_by TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS folder_files_folio_idx ON folder_files (folio, folder);
+CREATE TABLE IF NOT EXISTS worker_access_log (
+  id         SERIAL PRIMARY KEY,
+  worker_id  INTEGER,
+  username   TEXT,
+  folio      TEXT,
+  folder     TEXT,
+  file_id    INTEGER,
+  file_name  TEXT,
+  action     TEXT NOT NULL,
+  ip         TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS worker_access_log_worker_idx ON worker_access_log (worker_id, created_at DESC);

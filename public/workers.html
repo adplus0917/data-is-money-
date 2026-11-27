@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker accounts — Data Is Money admin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0d0f12; color: #e8e6df; }
+  header { padding: 14px 20px; border-bottom: 1px solid #262a30; font-weight: 700; }
+  header span { color: #c9a227; }
+  main { max-width: 920px; margin: 0 auto; padding: 20px; }
+  .card { background: #15181d; border: 1px solid #262a30; border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+  label { display: block; font-size: 13px; color: #a7a396; margin: 10px 0 4px; }
+  input { width: 100%; box-sizing: border-box; padding: 9px; border-radius: 8px; border: 1px solid #333842; background: #0d0f12; color: #e8e6df; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .row > div { flex: 1; min-width: 160px; }
+  button { background: #c9a227; color: #141414; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+  button.ghost { background: transparent; color: #a7a396; border: 1px solid #333842; }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  .err { color: #ff8a7a; font-size: 14px; min-height: 18px; }
+  .ok { color: #9ed08a; font-size: 14px; min-height: 18px; }
+  .muted { color: #a7a396; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 6px 4px; border-top: 1px solid #20242a; vertical-align: top; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>DATA <span>IS MONEY</span> — worker accounts (admin)</header>
+<main>
+  <div id="signed-out" class="card hidden">
+    <h2 style="margin-top:0">Admin sign-in required</h2>
+    <p class="muted">This page uses your team-panel admin session. Sign in on the <a href="/admin" style="color:#c9a227">team panel</a> first (as an admin), then come back here.</p>
+  </div>
+
+  <div id="app" class="hidden">
+    <section class="card">
+      <h3 style="margin-top:0">Add a worker</h3>
+      <div class="row">
+        <div><label>Username</label><input id="new-username" placeholder="e.g. jsmith"></div>
+        <div><label>Full name</label><input id="new-name" placeholder="e.g. John Smith"></div>
+        <div><label>Temporary password (10+ characters)</label><input id="new-password" type="text" placeholder="give this to the worker"></div>
+      </div>
+      <p class="err" id="create-err"></p>
+      <p class="ok" id="create-ok"></p>
+      <button id="create-btn">Create worker account</button>
+      <p class="muted">Workers sign in at <strong>/work</strong> with this username and password. They only see customers you assign below, and they can never open master files.</p>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">Workers</h3>
+      <div id="workers"></div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">Recent worker activity</h3>
+      <p class="muted">Every sign-in, file open, and refused master-open attempt is recorded here and in the audit log.</p>
+      <div id="access"></div>
+    </section>
+  </div>
+</main>
+<script src="/workers.js"></script>
+</body>
+</html>

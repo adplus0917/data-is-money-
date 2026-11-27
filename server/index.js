@@ -81,6 +81,11 @@ require("./console-routes")(app, { db, limiter, log });
    into the Backblaze B2 crewuploads bucket (isolated router; disabled
    unless UPLOAD_COMPANIES + B2_* env are set — see server/crew-upload.js) ---------- */
 require("./crew-upload")(app, { limiter, db });
+
+/* ---------- worker (non-admin) data-room accounts + per-customer folders
+   (Nov 27 2026): workers sign in at /work, see only assigned customers,
+   can never open masters, every open logged — see server/worker-routes.js ---------- */
+const workerApi = require("./worker-routes")(app, { db, limiter, log });
 app.get("/api/config", (req, res) => res.json({ vault: vault.enabled, maxSampleMb: storage.MAX_MB, maxDirectGb: Number(process.env.MAX_DIRECT_UPLOAD_GB || 5) }));
 
 /* ---------- public API (used by the seller funnel) ---------- */
@@ -113,6 +118,10 @@ app.post("/api/submissions", limiter(20, 10 * 60e3), async (req, res) => {
       upload_token_hash: crypto.createHash("sha256").update(uploadToken).digest("hex"),
     });
     notify(row).catch(() => {});
+    // Miguel's fixed per-customer folder set (intake / incoming /
+    // verified master / working copy / buyer view / contracts /
+    // correspondence / offers) is created with the customer.
+    if (workerApi && workerApi.ensureFolders) workerApi.ensureFolders(row.folio).catch(() => {});
     // If this seller booked an appointment earlier in the same session,
     // tie the booking to the folio so the team sees one connected record.
     if (Number(b.booking_id)) { try { await db.setBookingFolio(Number(b.booking_id), row.folio); } catch (e) { /* booking link is best-effort */ } }
