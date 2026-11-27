@@ -109,8 +109,24 @@ function buildState(env) {
   let storage;
   try { storage = createStorage(env); }
   catch (e) { console.error("crew-upload: disabled —", e.message); return { enabled: false }; }
-  let endpointOrigin = null;
-  try { endpointOrigin = new URL(env.B2_S3_ENDPOINT).origin; } catch {}
+  // The page CSP connect-src must name every origin the browser will
+  // PUT parts to, or the browser blocks the direct path and the page
+  // silently degrades to the slow server relay. That is exactly what
+  // happened after the Nov 27 S3 flip: this line still read only the
+  // legacy B2_S3_ENDPOINT, so connect-src named the old Backblaze
+  // origin while every presigned URL pointed at Amazon S3. Mirror
+  // crew-s3's rules: the effective endpoint is S3_ENDPOINT first with
+  // B2_S3_ENDPOINT as fallback, and on Amazon the bucket moves into
+  // the host (virtual-hosted style), so allow both origins.
+  const connectOrigins = new Set();
+  try {
+    const ep = new URL(env.S3_ENDPOINT || env.B2_S3_ENDPOINT);
+    connectOrigins.add(ep.origin);
+    if (/\.amazonaws\.com$/i.test(ep.hostname) && storage.bucket) {
+      connectOrigins.add(`${ep.protocol}//${storage.bucket}.${ep.hostname}`);
+    }
+  } catch {}
+  const endpointOrigin = connectOrigins.size ? [...connectOrigins].join(' ') : null;
   return { enabled: true, companies, transport: storage.transport, mode: storage.mode, bucket: storage.bucket, endpointOrigin };
 }
 
