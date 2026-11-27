@@ -14,7 +14,9 @@
    It also raises window.__DP_SCREEN, which app.js reads for the
    screening page's two hard gates: a REAL phone number is
    required here (optional on the homepage gate), and the
-   valuation step shows the RANGE only. Everything else — the
+   valuation step promotes an "up to" ceiling scaled by the
+   employee band (never a low-high range; the engine's computed
+   range is still what the CRM record stores). Everything else — the
    exact questions and wording, the email gate (valid format +
    real domain), the lead save into the CRM with its 1–10 score,
    the valuation engine, the 2 PM Zoom booking — is the site's

@@ -11,6 +11,14 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const usd = n => "$" + Math.round(n).toLocaleString("en-US");
 const kusd = n => n >= 1e6 ? "$" + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : "$" + Math.round(n / 1000) + "K";
+/* Screening-page promotion (Nov 27 2026, Miguel's ruling: "promote the up
+   floor, not the bottom floor"): in screen mode the valuation step shows an
+   "up to" CEILING scaled by the company's employee band (gate qualifier) —
+   never a low-high range. Geometric ladder (~x4.5 per band): the smallest
+   shops promote up to $10K, the largest up to $4M. Display only: the
+   engine's computed range is unchanged and is what the lead record stores
+   for the CRM. Adjust the ladder here if Miguel revises it. */
+const UPTO_BY_EMPBAND = { under20: 10000, "20to50": 45000, "51to150": 200000, "151to500": 900000, over500: 4000000 };
 const SS = { get(k, d) { try { return JSON.parse(sessionStorage.getItem(k)) ?? d } catch (e) { return d } }, set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)) } catch (e) {} } };
 const LS = { get(k, d) { try { return localStorage.getItem(k) ?? d } catch (e) { return d } }, set(k, v) { try { localStorage.setItem(k, v) } catch (e) {} } };
 
@@ -135,7 +143,8 @@ function stepHTML() {
   if (i === 3) {
     const v = valueDataset(engineInput(a)), b = v.breakdown;
     const sub = { base: lab("rev", a.revenue_band), fYears: lab("years", a.record_years), fEmployees: lab("emp", a.employees), fTypes: l.typesN(a.data_types.length), fFormat: lab("fmt", a.format), fFrequency: lab("freq", a.frequency) };
-    return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num"><span class="amt">${usd(v.low)}</span><span class="dash">–</span><span class="amt">${usd(v.high)}</span></div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
+    const estHead = window.__DP_SCREEN ? `<div class="lbl">${l.upToL}</div><div class="num"><span class="amt">${usd(UPTO_BY_EMPBAND[S.gate.q.employee_band] || UPTO_BY_EMPBAND.under20)}</span></div>` : `<div class="lbl">${l.rangeL}</div><div class="num"><span class="amt">${usd(v.low)}</span><span class="dash">–</span><span class="amt">${usd(v.high)}</span></div>`;
+    return h + `<div class="est">${estHead}<div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
      <div class="score"><span>${l.scoreL}</span><div class="m"><i style="width:${v.score}%"></i></div><b>${v.score}/100</b></div></div>
      <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}${window.__DP_SCREEN ? "" : `<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div>`}</div>
      <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.bkNext) + fbBox(4);
