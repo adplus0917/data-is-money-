@@ -137,7 +137,7 @@ function stepHTML() {
     const sub = { base: lab("rev", a.revenue_band), fYears: lab("years", a.record_years), fEmployees: lab("emp", a.employees), fTypes: l.typesN(a.data_types.length), fFormat: lab("fmt", a.format), fFrequency: lab("freq", a.frequency) };
     return h + `<div class="est"><div class="lbl">${l.rangeL}</div><div class="num"><span class="amt">${usd(v.low)}</span><span class="dash">–</span><span class="amt">${usd(v.high)}</span></div><div class="tier">${l.tierL}: ${esc(lab("tier", v.tier))}</div>
      <div class="score"><span>${l.scoreL}</span><div class="m"><i style="width:${v.score}%"></i></div><b>${v.score}/100</b></div></div>
-     <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div></div>
+     <h3 style="font-size:18px;margin-top:22px">${l.built}</h3><div class="factors">${Object.keys(b).map(k => `<div><span>${l.fl[k]}<small>${esc(sub[k])}</small></span><b>${k === "base" ? usd(b[k]) : "× " + b[k].toFixed(2)}</b></div>`).join("")}${window.__DP_SCREEN ? "" : `<div class="tot"><span>${l.pointL}</span><b>${usd(v.point)}</b></div>`}</div>
      <p class="disc">${l.disc}</p><p class="trackn">${l.buyNote}</p>` + navBtns(i, l.bkNext) + fbBox(4);
   }
   if (i === 4) return bookingHTML();
@@ -173,7 +173,7 @@ function gateHTML() {
     <div class="f"><label for="g_name">${l.gateName}</label><input id="g_name" data-g="name" type="text" autocomplete="name" maxlength="160" value="${esc(g.name)}"></div>
     <div class="f"><label for="g_company">${l.gateCompany}</label><input id="g_company" data-g="company" type="text" autocomplete="organization" maxlength="160" value="${esc(g.company)}"></div>
     <div class="f"><label for="g_email">${l.fEmail}</label><input id="g_email" data-g="email" type="email" autocomplete="email" maxlength="200" value="${esc(g.email)}"><div class="emsg" role="alert">${esc(em)}</div></div>
-    <div class="f"><label for="g_phone">${l.gateWa}</label><input id="g_phone" data-g="phone" type="tel" autocomplete="tel" maxlength="40" value="${esc(g.phone)}"></div>
+    <div class="f"><label for="g_phone">${window.__DP_SCREEN && l.gateWaReq ? l.gateWaReq : l.gateWa}</label><input id="g_phone" data-g="phone" type="tel" autocomplete="tel" maxlength="40" value="${esc(g.phone)}"></div>
    </div>
    ${gq("industry", "industry", l.qIndustry)}
    ${gq("authority", "data_authority", l.qAuthority)}
@@ -189,6 +189,10 @@ async function gateSubmit() {
   if (g.busy) return;
   if (!g.name.trim()) { g.err = l.gateErrName; save(); render(); return; }
   if (!g.company.trim()) { g.err = l.gateErrCompany; save(); render(); return; }
+  if (window.__DP_SCREEN) {
+    const digits = g.phone.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) { g.err = l.gateErrPhone; save(); render(); return; }
+  }
   const emErr = emailErrorClient(g.email);
   if (emErr) { g.err = emErr === "tld" ? l.errEmailTld : l.errEmailFmt; save(); render(); return; }
   if (Object.values(g.q).some(v => !v)) { g.err = l.gateErrQual; save(); render(); return; }
