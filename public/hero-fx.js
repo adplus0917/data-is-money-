@@ -20,7 +20,20 @@
   var iconOff = document.getElementById("sound-icon-off");
   var iconOn = document.getElementById("sound-icon-on");
   var soundLabel = document.getElementById("sound-label");
-  var userStoppedMusic = false;
+  /* The visitor's music choice persists across steps, pages and reloads
+     (localStorage, key dp-music-pref: "off" | "on"; absent = no explicit
+     choice yet). Once a visitor turns the music off it stays off — the
+     first-gesture starter below never overrides a stored "off" — until
+     they turn it back on. Storage failures (private mode) fall back to
+     the in-memory flag for the current page only. */
+  var MUSIC_PREF_KEY = "dp-music-pref";
+  function readMusicPref() {
+    try { return window.localStorage.getItem(MUSIC_PREF_KEY); } catch (e) { return null; }
+  }
+  function saveMusicPref(v) {
+    try { window.localStorage.setItem(MUSIC_PREF_KEY, v); } catch (e) { /* storage blocked: in-memory flag still applies */ }
+  }
+  var userStoppedMusic = readMusicPref() === "off";
 
   function soundStrings() {
     var lang = document.documentElement.lang === "es" ? "es" : "en";
@@ -53,9 +66,11 @@
     soundBtn.addEventListener("click", function () {
       if (audio.paused) {
         userStoppedMusic = false;
+        saveMusicPref("on");
         tryPlayMusic();
       } else {
         userStoppedMusic = true;
+        saveMusicPref("off");
         audio.pause();
         setSoundUI(false);
       }
@@ -64,8 +79,10 @@
     audio.addEventListener("pause", function () { setSoundUI(false); });
     /* Browsers block audible autoplay, so try immediately and, if the
        browser refuses, start on the visitor's first tap, click or key
-       press anywhere on the page (unless they turned the music off). */
-    tryPlayMusic();
+       press anywhere on the page (unless they turned the music off —
+       a stored "off" is honored from the first line, so returning
+       visitors and mid-funnel reloads stay silent). */
+    if (userStoppedMusic) { setSoundUI(false); } else { tryPlayMusic(); }
     var armFirstGesture = function (e) {
       if (userStoppedMusic) { return; }
       if (e && e.target && e.target.closest && e.target.closest("#sound-toggle")) { return; }
